@@ -1,0 +1,12 @@
+{
+  "name": "coding",
+  "description": "Coding Opus: memória + orquestração inteligente.",
+  "owner": { "name": "coding-opus contributors" },
+  "plugins": [
+    {
+      "name": "coding",
+      "source": "./",
+      "description": "Second brain global e orquestração Alethe para gastar menos e errar menos."
+    }
+  ]
+}
