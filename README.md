@@ -45,14 +45,12 @@ Remova as skills `alethe`, `obsidian`, `obsidian-second-brain`, `alethe-second-b
 | `/coding install` | cria ou reaproveita o second brain e as regras globais |
 | `/coding onde` | mostra onde está o second brain |
 | `/coding consultar <termos>` | busca notas e cita os caminhos |
-| `/coding <tarefa>` | orquestra a tarefa usando a memória |
-| `/coding registrar` | grava a orquestração atual como nota, depois da prévia |
-| `/coding report` | o que a orquestração fez e custou |
-| `/coding setup` | checa provedores e a política da orquestração e faz o onboarding |
+| `/coding <tarefa>` | orquestra a tarefa: memória, playbook e workers no quadro do Coding Agent |
+| `/coding registrar` | grava uma decisão como nota, depois da prévia |
+| `/coding playbooks` | mostra qual playbook vale para cada tipo de tarefa |
 
-No Codex, use `$coding`.
-
-Os outros comandos curtos da orquestração (`status`, `usage`, `stop`, `mode on`, `save`, `max`...) continuam valendo.
+No Codex, use `$coding`. Editar playbooks, papéis e limites, ver cota e custo e guardar um lote
+concluído são telas do Coding Agent, não comandos da skill.
 
 ## Estrutura
 
@@ -62,27 +60,27 @@ skills/coding/
 ├── references/
 │   ├── memoria.md           pilar 1: instalação global, consulta e escrita
 │   ├── obsidian-mcp.md      MCP second-brain em escopo de usuário
-│   ├── orquestracao.md      pilar 2: orquestração inteligente (pt-BR)
-│   ├── modo-app.md          a skill planeja, o Coding Agent executa
-│   └── ...                  referências de playbooks, rotas, provedores e operações
+│   ├── orquestracao.md      pilar 2: a skill decide, o Coding Agent executa
+│   ├── playbooks.md         campos do playbooks.yaml
+│   └── briefs.md            como escrever briefs e revisar
 ├── scripts/
 │   ├── brain.py             memória: where, install, find, record
-│   ├── orchestrate.py       orquestração
-│   ├── hook.py, diagram.py
-├── playbooks.yaml, prices.json, schemas/, assets/
+│   └── playbook.py          estratégia: --pick, <nome>, --path, --check
+├── playbooks.yaml, prices.json
 └── licenses/                licenças MIT dos projetos de origem
 ```
 
 ```sh
 py scripts/brain.py where
-py scripts/brain.py install --dry-run
 py scripts/brain.py find mindloom exportacao --route 30-Projetos
-py scripts/brain.py record --title "Auditoria final" --folder 30-Projetos --write
+py scripts/brain.py record --title "Auditoria final" --folder 30-Projetos --summary "..." --write
+py scripts/playbook.py --pick
+py scripts/playbook.py plan-execute
 ```
 
-## Estado da orquestração
-
-Política, playbooks, preços, cota e histórico ficam em `%APPDATA%\CodingOpus` (Windows) ou `~/.config/coding-opus`. Se você usava a Alethe, a primeira execução copia `%APPDATA%\Alethe` para lá e renomeia os arquivos `alethe-*` para `coding-opus-*`, sem apagar a pasta antiga.
+Os playbooks do usuário ficam em `%APPDATA%\CodingOpus\coding-opus-playbooks.yaml` (Windows) ou
+`~/.config/coding-opus/`, o mesmo arquivo que *Preferências ▸ Playbooks* edita. Se você usava a
+Alethe, a primeira execução copia `%APPDATA%\Alethe` para lá, sem apagar a pasta antiga.
 
 ## Créditos e licença
 
