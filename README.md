@@ -1,6 +1,6 @@
 # Coding Opus
 
-Uma skill global para Claude Code e Codex que melhora a performance e a economia da IA com dois pilares:
+A skill do [Coding Agent](https://github.com/oigorbrazil/coding-agent) para Claude Code e Codex que melhora a performance e a economia da IA com dois pilares:
 
 | Pilar | O que faz |
 | --- | --- |
@@ -16,20 +16,11 @@ Uma skill global para Claude Code e Codex que melhora a performance e a economia
 
 ## Instalação
 
+A Coding Opus é distribuída **dentro do [Coding Agent](https://github.com/oigorbrazil/coding-agent)**: o app instala a skill `coding` no Claude Code e no Codex pela aba *Preferências ▸ Skills* e mantém a versão em dia a cada release. Dentro do app, a skill planeja e lembra, e o app executa os workers no quadro de orquestração ([`references/modo-app.md`](skills/coding/references/modo-app.md)).
+
 Requer Python 3.9+. Node.js só é necessário para o MCP opcional.
 
-**Como skill global:** copie `skills/coding` para `~/.claude/skills/` (Claude Code) ou `~/.agents/skills/` (Codex).
-
-```sh
-npx skills add oigorbrazil/coding-opus --skill coding -g
-```
-
-**Como plugin** (Claude Code, ativa também o hook do modo passivo):
-
-```sh
-/plugin marketplace add oigorbrazil/coding-opus
-/plugin install coding@coding
-```
+Este repositório é a fonte da skill: o Coding Agent a copia com `npm run skill:sync`. Para testar uma alteração sem o app, copie `skills/coding` para `~/.claude/skills/` (Claude Code) ou `~/.agents/skills/` (Codex).
 
 Depois, em qualquer sessão:
 
@@ -45,7 +36,7 @@ A instalação:
 
 Nada é escrito nos seus projetos. Para usar outro local, defina `CODING_OPUS_BRAIN` ou passe `--brain`.
 
-Instale só uma forma e remova as skills `alethe`, `obsidian`, `obsidian-second-brain`, `alethe-second-brain` ou `coding-opus` separadas, se existirem: esta as substitui.
+Remova as skills `alethe`, `obsidian`, `obsidian-second-brain`, `alethe-second-brain` ou `coding-opus` separadas, se existirem: esta as substitui.
 
 ## Comandos
 
@@ -59,7 +50,7 @@ Instale só uma forma e remova as skills `alethe`, `obsidian`, `obsidian-second-
 | `/coding report` | o que a orquestração fez e custou |
 | `/coding setup` | checa provedores e a política da orquestração e faz o onboarding |
 
-No Codex, use `$coding`. Como plugin, o Claude Code mostra a skill com o prefixo do plugin (`/coding:coding`).
+No Codex, use `$coding`.
 
 Os outros comandos curtos da orquestração (`status`, `usage`, `stop`, `mode on`, `save`, `max`...) continuam valendo.
 
@@ -72,6 +63,7 @@ skills/coding/
 │   ├── memoria.md           pilar 1: instalação global, consulta e escrita
 │   ├── obsidian-mcp.md      MCP second-brain em escopo de usuário
 │   ├── orquestracao.md      pilar 2: orquestração inteligente (pt-BR)
+│   ├── modo-app.md          a skill planeja, o Coding Agent executa
 │   └── ...                  referências de playbooks, rotas, provedores e operações
 ├── scripts/
 │   ├── brain.py             memória: where, install, find, record
