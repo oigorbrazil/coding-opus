@@ -15,14 +15,6 @@ são subcomandos de `scripts/orchestrate.py` (no Windows, `py scripts/orchestrat
 - **Estratégia do runner** = como uma onda roda (`economy`, `balanced`, `quality`, `research`,
   `parallel`, `rescue`).
 
-O executor padrão é o runner `scripts/orchestrate.py`: ele sobe workers CLI (Codex, Claude Code,
-Antigravity, Kimi ou outro CLI com adaptador), vigia a cota e faz o relatório de custo. Sem nenhum
-outro CLI de agente instalado, ou sem Python, use os subagentes do próprio cliente como em
-"Alternativa leve: subagentes do cliente" no fim deste arquivo.
-
-O Coding Agent é um anfitrião opcional: instala a skill (*Preferências ▸ Plugins*) e edita os
-playbooks (*Preferências ▸ Playbooks*), no mesmo arquivo que o runner lê. Ele não executa workers.
-
 ## Estado e nomes
 
 | Item | Onde |
@@ -48,7 +40,7 @@ ficarem abaixo de 3.9, ou se o usuário pedir, siga [manual.md](manual.md) para 
 workers em segundo plano e relatório. As outras seções continuam valendo pelos equivalentes manuais.
 
 O caminho da skill não precisa de MCP. Ele roda workers concorrentes limitados, com isolamento
-opcional em worktree e sessões retomáveis.
+opcional em worktree e sessões retomáveis. Workers CLI não aparecem no quadro do app Alethe.
 
 ## Primeira execução e configuração
 
@@ -79,7 +71,7 @@ Traduza pedidos soltos de configuração em ações:
 | "no máximo N chamadas / C dólares / T tokens nesta tarefa" | `budget` com esses limites antes da primeira onda |
 | "onde paramos?", ou depois de uma compactação | `status` antes de tudo |
 | "volte ao padrão" | confirme e rode `policy reset` |
-| "mude os playbooks" ou os papéis por fase | `playbook --init` e edite a cópia que ele mostra; o `editor` e *Preferências ▸ Playbooks* do Coding Agent gravam o mesmo arquivo |
+| "mude os playbooks" ou os papéis por fase | `playbook --init` e edite a cópia que ele mostra; o editor exporta o mesmo arquivo |
 | "use savings" ou "modo agressivo" como preferência | confirme e defina `profile` na cópia dos playbooks |
 | "o que fez?", "quanto custou?" | `report`, sem confirmação |
 
@@ -432,37 +424,5 @@ são alegações: confira o diff. Para briefs de revisão, validação, juiz e p
   e trabalho mecânico; deixe ambiguidade e integração com o lead ou um revisor capaz.
 - Um worker que falhou pode ser repetido uma vez, só quando o erro tiver uma causa específica e
   corrigível.
-
-## Alternativa leve: subagentes do cliente
-
-Quando `probe` não acha nenhum CLI de agente além do próprio cliente, ou não há Python, as fases do
-playbook rodam como subagentes do cliente em que a conversa está. Diga isso em uma linha.
-
-| Cliente | Ferramenta | Como uma fase vira workers |
-| --- | --- | --- |
-| Claude Code | `Agent` (antes chamada `Task`) | uma chamada por unidade, todas as independentes da fase **na mesma mensagem** |
-| Codex | os subagentes do Codex, quando a versão os oferece | o mesmo: uma unidade por subagente |
-| cliente sem subagentes | nenhuma | o lead faz a fase nesta conversa, na ordem do playbook |
-
-| Campo da fase | No Claude Code (`Agent`) |
-| --- | --- |
-| `tier` | `model` resolvido por `playbook <id>` (ou `playbook.py <id>`) para o fornecedor da conversa |
-| `effort` resolvido | `effort` do subagente, quando o cliente aceita |
-| `readOnly: true` | `subagent_type: Explore`, ou "não edite nada" no brief |
-| `isolate: true` | `isolation: "worktree"` (exige git); depois você integra |
-| `workers` | quantas unidades, até `passive.askAboveWorkers` sem perguntar |
-
-Diferenças em relação ao runner:
-
-- Os subagentes rodam no fornecedor da conversa. Uma fase que fixa outro fornecedor, ou uma troca
-  por cota, vira pergunta: rodar aqui no mesmo nível ou instalar o outro CLI e usar o runner.
-- Não há `usage`, `dry-run`, `budget` nem `report`. A cota vem do usuário ou da tela de uso do
-  cliente (`/usage` no Claude Code); cota desconhecida não é folga. O relatório usa só os tokens e
-  o tempo que o cliente mostrar, sem estimar custo.
-- O contrato do worker não é acrescentado sozinho: termine cada brief pedindo `STATUS:` e
-  `SUMMARY:` e proibindo commit, push e novos subagentes.
-- Fixe o modelo de cada subagente: vazio, ele herda o da conversa, que costuma ser o mais caro.
-- Verifique pelo `gate` e pelo `git diff`, nunca pela palavra do subagente. Registre com
-  `brain.py record --no-report --body "<relatório>"`.
 
 Não faça commit, push, tag, release nem abra pull request sem pedido explícito do usuário.

@@ -114,6 +114,7 @@ flag/value pairs, `--flag=value`, config overrides and substituted arguments.
 
 ## Unsupported MCP features
 
-The runner cannot provide live mid-turn steering or approval dialogs: read results after each wave
-and correct course in the next one. Claude and Codex quota readings are available through `usage`
-without MCP; other readings still need the user as [playbooks.md](playbooks.md) describes.
+Plain CLI workers do not appear on Coding Opus's orchestration board. The runner cannot provide live
+mid-turn steering or approval dialogs. Claude and Codex quota readings are available through
+`usage` without MCP; other readings still need Coding Opus or the user as [playbooks.md](playbooks.md)
+describes. Use the Alethe app's `alethe_*` MCP tools when board or steering capabilities matter.

@@ -1,11 +1,11 @@
 # Coding Opus
 
-Uma skill global para Claude Code e Codex que melhora a performance e a economia da IA com dois pilares. Ela funciona sozinha, sem app:
+Uma skill global para Claude Code e Codex que melhora a performance e a economia da IA com dois pilares:
 
 | Pilar | O que faz |
 | --- | --- |
 | **1. Memória** | Um *second brain* global em `Documentos/second brain`, com decisões, estudos e notas que a IA consulta antes de responder. Ela para de redescobrir o que já sabe e de contradizer o que já foi decidido. |
-| **2. Orquestração inteligente** | Recriada a partir da [Alethe](https://github.com/Kc1t/alethe-orchestrate-skill): planeja, entrega unidades limitadas para os workers mais baratos e capazes (Codex, Claude Code, Antigravity, Kimi ou qualquer CLI), vigia a cota e relata o que cada worker fez e custou, pelo próprio runner (`orchestrate.py`). Sem outro CLI de agente instalado, usa os subagentes do próprio cliente. |
+| **2. Orquestração inteligente** | Recriada a partir da [Alethe](https://github.com/Kc1t/alethe-orchestrate-skill): planeja, entrega unidades limitadas para os workers mais baratos e capazes (Codex, Claude Code, Antigravity, Kimi ou qualquer CLI), vigia a cota e relata o que cada worker fez e custou. |
 
 ## Como os pilares trabalham juntos
 
@@ -30,8 +30,6 @@ npx skills add oigorbrazil/coding-opus --skill coding -g
 /plugin marketplace add oigorbrazil/coding-opus
 /plugin install coding@coding
 ```
-
-**Pelo [Coding Agent](https://github.com/oigorbrazil/coding-agent)** (opcional): o app instala a skill em *Preferências ▸ Plugins* e edita os playbooks em *Preferências ▸ Playbooks*, no mesmo arquivo que o runner lê. O app não executa os workers; quem executa é a skill.
 
 Depois, em qualquer sessão:
 
@@ -78,13 +76,10 @@ skills/coding/
 ├── scripts/
 │   ├── brain.py             memória: where, install, find, record
 │   ├── orchestrate.py       orquestração
-│   ├── playbook.py          leitura dos playbooks sem o runner
 │   ├── hook.py, diagram.py
 ├── playbooks.yaml, prices.json, schemas/, assets/
 └── licenses/                licenças MIT dos projetos de origem
 ```
-
-Na raiz, `.claude-plugin/` e `hooks/hooks.json` servem à instalação como plugin do Claude Code.
 
 ```sh
 py scripts/brain.py where
@@ -95,7 +90,7 @@ py scripts/brain.py record --title "Auditoria final" --folder 30-Projetos --writ
 
 ## Estado da orquestração
 
-Política, playbooks, preços, cota e histórico ficam em `%APPDATA%\CodingOpus` (Windows) ou `~/.config/coding-opus`. Os playbooks do usuário são `coding-opus-playbooks.yaml` nessa pasta, o mesmo arquivo que o `editor` da skill e o Coding Agent editam. Se você usava a Alethe, a primeira execução copia `%APPDATA%\Alethe` para lá e renomeia os arquivos `alethe-*` para `coding-opus-*`, sem apagar a pasta antiga.
+Política, playbooks, preços, cota e histórico ficam em `%APPDATA%\CodingOpus` (Windows) ou `~/.config/coding-opus`. Se você usava a Alethe, a primeira execução copia `%APPDATA%\Alethe` para lá e renomeia os arquivos `alethe-*` para `coding-opus-*`, sem apagar a pasta antiga.
 
 ## Créditos e licença
 

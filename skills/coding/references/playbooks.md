@@ -21,10 +21,6 @@ the next plan. The page is one offline file and reads the YAML itself, so it nee
 [manual.md](manual.md). It shows the playbooks; to show one plan's workers, use
 [diagram.md](diagram.md).
 
-With Coding Agent installed, **Preferences ▸ Playbooks** edits the same user copy
-(`%APPDATA%\CodingOpus\coding-opus-playbooks.yaml`, or `~/.config/coding-opus/`) in a flow view.
-Either editor works; run `doctor` (or `playbook.py --check`) after saving.
-
 ## Top level
 
 | Field | Meaning |
