@@ -1,11 +1,11 @@
 # Coding Opus
 
-A skill do [Coding Agent](https://github.com/oigorbrazil/coding-agent) para Claude Code e Codex que melhora a performance e a economia da IA com dois pilares:
+Uma skill global para Claude Code e Codex que melhora a performance e a economia da IA com dois pilares. Ela funciona sozinha, sem app:
 
 | Pilar | O que faz |
 | --- | --- |
 | **1. Memória** | Um *second brain* global em `Documentos/second brain`, com decisões, estudos e notas que a IA consulta antes de responder. Ela para de redescobrir o que já sabe e de contradizer o que já foi decidido. |
-| **2. Orquestração inteligente** | Recriada a partir da [Alethe](https://github.com/Kc1t/alethe-orchestrate-skill): planeja, entrega unidades limitadas para os workers mais baratos e capazes (Codex, Claude Code, Antigravity, Kimi ou qualquer CLI), vigia a cota e relata o que cada worker fez e custou. |
+| **2. Orquestração inteligente** | Recriada a partir da [Alethe](https://github.com/Kc1t/alethe-orchestrate-skill): planeja, entrega unidades limitadas para os workers mais baratos e capazes (Codex, Claude Code, Antigravity, Kimi ou qualquer CLI), vigia a cota e relata o que cada worker fez e custou, pelo próprio runner (`orchestrate.py`). Sem outro CLI de agente instalado, usa os subagentes do próprio cliente. |
 
 ## Como os pilares trabalham juntos
 
@@ -16,11 +16,22 @@ A skill do [Coding Agent](https://github.com/oigorbrazil/coding-agent) para Clau
 
 ## Instalação
 
-A Coding Opus é distribuída **dentro do [Coding Agent](https://github.com/oigorbrazil/coding-agent)**: o app instala a skill `coding` no Claude Code e no Codex pela aba *Preferências ▸ Skills* e mantém a versão em dia a cada release. Dentro do app, a skill planeja e lembra, e o app executa os workers no quadro de orquestração ([`references/modo-app.md`](skills/coding/references/modo-app.md)).
-
 Requer Python 3.9+. Node.js só é necessário para o MCP opcional.
 
-Este repositório é a fonte da skill: o Coding Agent a copia com `npm run skill:sync`. Para testar uma alteração sem o app, copie `skills/coding` para `~/.claude/skills/` (Claude Code) ou `~/.agents/skills/` (Codex).
+**Como skill global:** copie `skills/coding` para `~/.claude/skills/` (Claude Code) ou `~/.agents/skills/` (Codex).
+
+```sh
+npx skills add oigorbrazil/coding-opus --skill coding -g
+```
+
+**Como plugin** (Claude Code, ativa também o hook do modo passivo):
+
+```sh
+/plugin marketplace add oigorbrazil/coding-opus
+/plugin install coding@coding
+```
+
+**Pelo [Coding Agent](https://github.com/oigorbrazil/coding-agent)** (opcional): o app instala a skill em *Preferências ▸ Plugins* e edita os playbooks em *Preferências ▸ Playbooks*, no mesmo arquivo que o runner lê. O app não executa os workers; quem executa é a skill.
 
 Depois, em qualquer sessão:
 
@@ -36,7 +47,7 @@ A instalação:
 
 Nada é escrito nos seus projetos. Para usar outro local, defina `CODING_OPUS_BRAIN` ou passe `--brain`.
 
-Remova as skills `alethe`, `obsidian`, `obsidian-second-brain`, `alethe-second-brain` ou `coding-opus` separadas, se existirem: esta as substitui.
+Instale só uma forma e remova as skills `alethe`, `obsidian`, `obsidian-second-brain`, `alethe-second-brain` ou `coding-opus` separadas, se existirem: esta as substitui.
 
 ## Comandos
 
@@ -45,12 +56,14 @@ Remova as skills `alethe`, `obsidian`, `obsidian-second-brain`, `alethe-second-b
 | `/coding install` | cria ou reaproveita o second brain e as regras globais |
 | `/coding onde` | mostra onde está o second brain |
 | `/coding consultar <termos>` | busca notas e cita os caminhos |
-| `/coding <tarefa>` | orquestra a tarefa: memória, playbook e workers no quadro do Coding Agent |
-| `/coding registrar` | grava uma decisão como nota, depois da prévia |
-| `/coding playbooks` | mostra qual playbook vale para cada tipo de tarefa |
+| `/coding <tarefa>` | orquestra a tarefa usando a memória |
+| `/coding registrar` | grava a orquestração atual como nota, depois da prévia |
+| `/coding report` | o que a orquestração fez e custou |
+| `/coding setup` | checa provedores e a política da orquestração e faz o onboarding |
 
-No Codex, use `$coding`. Editar playbooks, papéis e limites, ver cota e custo e guardar um lote
-concluído são telas do Coding Agent, não comandos da skill.
+No Codex, use `$coding`. Como plugin, o Claude Code mostra a skill com o prefixo do plugin (`/coding:coding`).
+
+Os outros comandos curtos da orquestração (`status`, `usage`, `stop`, `mode on`, `save`, `max`...) continuam valendo.
 
 ## Estrutura
 
@@ -60,27 +73,29 @@ skills/coding/
 ├── references/
 │   ├── memoria.md           pilar 1: instalação global, consulta e escrita
 │   ├── obsidian-mcp.md      MCP second-brain em escopo de usuário
-│   ├── orquestracao.md      pilar 2: a skill decide, o Coding Agent executa
-│   ├── playbooks.md         campos do playbooks.yaml
-│   └── briefs.md            como escrever briefs e revisar
+│   ├── orquestracao.md      pilar 2: orquestração inteligente (pt-BR)
+│   └── ...                  referências de playbooks, rotas, provedores e operações
 ├── scripts/
 │   ├── brain.py             memória: where, install, find, record
-│   └── playbook.py          estratégia: --pick, <nome>, --path, --check
-├── playbooks.yaml, prices.json
+│   ├── orchestrate.py       orquestração
+│   ├── playbook.py          leitura dos playbooks sem o runner
+│   ├── hook.py, diagram.py
+├── playbooks.yaml, prices.json, schemas/, assets/
 └── licenses/                licenças MIT dos projetos de origem
 ```
 
+Na raiz, `.claude-plugin/` e `hooks/hooks.json` servem à instalação como plugin do Claude Code.
+
 ```sh
 py scripts/brain.py where
+py scripts/brain.py install --dry-run
 py scripts/brain.py find mindloom exportacao --route 30-Projetos
-py scripts/brain.py record --title "Auditoria final" --folder 30-Projetos --summary "..." --write
-py scripts/playbook.py --pick
-py scripts/playbook.py plan-execute
+py scripts/brain.py record --title "Auditoria final" --folder 30-Projetos --write
 ```
 
-Os playbooks do usuário ficam em `%APPDATA%\CodingOpus\coding-opus-playbooks.yaml` (Windows) ou
-`~/.config/coding-opus/`, o mesmo arquivo que *Preferências ▸ Playbooks* edita. Se você usava a
-Alethe, a primeira execução copia `%APPDATA%\Alethe` para lá, sem apagar a pasta antiga.
+## Estado da orquestração
+
+Política, playbooks, preços, cota e histórico ficam em `%APPDATA%\CodingOpus` (Windows) ou `~/.config/coding-opus`. Os playbooks do usuário são `coding-opus-playbooks.yaml` nessa pasta, o mesmo arquivo que o `editor` da skill e o Coding Agent editam. Se você usava a Alethe, a primeira execução copia `%APPDATA%\Alethe` para lá e renomeia os arquivos `alethe-*` para `coding-opus-*`, sem apagar a pasta antiga.
 
 ## Créditos e licença
 
