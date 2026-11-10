@@ -11,15 +11,15 @@ to restore defaults. `doctor` validates the copy. See [onboarding.md](onboarding
 
 ## See and edit the playbooks
 
-`editor` writes the effective playbooks as a flow page, `coding-opus-playbooks.html` next to the policy
-(or `--out <file>`), and opens it (`--no-open` only writes it). Each playbook is a flowchart with
-its conditions, fallbacks and the model each step resolves to under the chosen profile. The page
-starts from the latest quota readings as the `now` usage preset; the other presets and sliders
-only simulate. Task, checks and budget switches show which branch runs. Edits stay in the page
-until the user copies or downloads the YAML; save it over the user's copy and run `doctor` before
-the next plan. The page is one offline file and reads the YAML itself, so it needs no Python: see
-[manual.md](manual.md). It shows the playbooks; to show one plan's workers, use
-[diagram.md](diagram.md).
+`editor` opens the playbooks editor, the same one Coding Agent 2 shows under Settings →
+Playbooks. It starts a small server on 127.0.0.1 in the background (`scripts/editor_server.py`,
+standard library only), prints its URL with a one-time token and opens it (`--no-open` only
+prints it). The page reads the effective playbooks, edits them as a flowchart with blocks,
+conditions and an inspector, and **Save** writes the user's copy next to the policy, keeping the
+previous one as `.bak` and refusing anything `doctor` would reject. It reloads by itself when the
+file changes elsewhere (Coding Agent 2, an agent, a manual edit) unless there are unsaved edits.
+The server stops about a minute and a half after the page closes. It shows the playbooks; to show
+one plan's workers, use [diagram.md](diagram.md).
 
 ## Top level
 

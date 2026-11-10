@@ -203,15 +203,10 @@ needs only what you know; use `null` for anything its CLI did not report:
 - No automatic `dry-run`: estimate prompt tokens as task characters divided by four. A dollar
   estimate may use verified prices only; label it a list-price estimate, never actual spend.
 - No `diagram.py`: draw the plan as a Mermaid flowchart when the user wants to see it.
-- No `editor`: copy `assets/editor.html` and replace its line `__PLAYBOOKS_YAML__` with the full
-  text of the effective playbooks file (the user's `coding-opus-playbooks.yaml` next to the policy, else
-  the bundled `playbooks.yaml`), writing any `</script` in it as `<\/script`. Use the shell rather
-  than reading the 180 KB page: `sed -e '/__PLAYBOOKS_YAML__/{r <yaml>' -e 'd}' <template> > <page>`,
-  or in PowerShell `(Get-Content -Raw <template>).Replace('__PLAYBOOKS_YAML__', (Get-Content -Raw
-  <yaml>)) | Set-Content <page>`. Optionally put the quota you read in the `live-usage` block, as
-  `{"claude": {"short": 26, "week": 69, "opus": 0, "reset": 49}}` (percent used; `reset` is hours
-  until the weekly window resets). To simulate `price-above`, optionally put the price table in the
-  `model-prices` block, as `{"claude/sonnet": {"input": 2, "output": 10}}` (USD per 1M tokens).
+- No `editor`: the editor needs `scripts/editor_server.py` (Python). Without it, edit the user's
+  `coding-opus-playbooks.yaml` next to the policy directly (copy the bundled `playbooks.yaml` there
+  first if it does not exist) and keep its structure; Coding Agent 2's Settings → Playbooks edits
+  the same file.
   Open the page; a red line at the top names a YAML error.
 - No Windows `.cmd` shim handling: run the commands through your own shell, which handles the shim,
   and keep newlines and quotes inside `task.md` rather than in arguments.

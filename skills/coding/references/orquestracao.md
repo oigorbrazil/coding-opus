@@ -98,7 +98,7 @@ orquestração atual: a que `new` iniciou, `use` escolheu ou o último `run` gra
 | `status` | `status`, e mostre a saída como está |
 | `usage` | `usage`; `--refresh-claude` quando a leitura do Claude estiver ausente ou velha, `--refresh-agy` idem para o Antigravity; mostre janelas, resets e idade |
 | `models` | `models`; mostre preços, ranks e idade dos preços |
-| `editor`, "mostre os playbooks" | `editor`, que grava os playbooks como página de fluxo e abre; sem Python, preencha `assets/editor.html` como em [manual.md](manual.md) |
+| `editor`, "mostre os playbooks" | `editor`, que abre o editor de playbooks (o mesmo do Coding Agent 2) num servidor local em 127.0.0.1; o botão Salvar grava a cópia do usuário. Sem Python, edite o YAML como em [manual.md](manual.md) |
 | `list` | `list`; `use <pasta>` torna uma delas a atual de novo |
 | `stop` | `stop` e depois `status` quando as ondas terminarem |
 | `clean [--older-than DIAS] [--yes]` | prévia das pastas concluídas com mais de 14 dias; apague só com `--yes` |
