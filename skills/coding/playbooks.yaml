@@ -23,6 +23,20 @@ providers:
   - "agy"
   - "codex"
   - "opencode"
+adapters:
+  opencode:
+    command: "opencode"
+    args:
+      - "run"
+      - "--standalone"
+      - "--format"
+      - "json"
+    promptTransport: "argument"
+    outputFormat: "jsonl"
+    modelFlag: "--model"
+    checked:
+      command: "opencode run --help"
+      date: "2026-11-09"
 tiers:
   cheap:
     claude:

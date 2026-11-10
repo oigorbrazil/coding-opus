@@ -1,6 +1,6 @@
 {
   "name": "coding",
-  "version": "1.0.0",
+  "version": "32.0.0",
   "description": "Mais performance e economia para a IA com dois pilares: memória (second brain global em Documentos) e orquestração inteligente (Alethe) de workers Codex, Claude Code, Antigravity, Kimi ou qualquer CLI.",
   "license": "MIT",
   "keywords": ["orchestration", "agents", "memory", "second-brain", "obsidian", "token-saving", "skills"]

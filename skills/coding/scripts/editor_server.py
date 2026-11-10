@@ -164,13 +164,55 @@ def serve(policy_path: Path, port: int, token: str) -> None:
     server.serve_forever()
 
 
+def launch(policy_path: Path, open_browser: bool) -> Dict[str, Any]:
+    """Start the server as a detached process, wait until it answers, and open the page."""
+    import os
+    import secrets
+    import socket
+    import subprocess
+    import webbrowser
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    token = secrets.token_urlsafe(24)
+    command = [sys.executable, str(Path(__file__).resolve()), "--policy", str(policy_path),
+               "--port", str(port), "--token", token]
+    options: Dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+                               "stderr": subprocess.DEVNULL}
+    if os.name == "nt":
+        options["creationflags"] = 0x00000008 | 0x00000200 | 0x08000000  # detached, new group, no window
+    else:
+        options["start_new_session"] = True
+    process = subprocess.Popen(command, **options)
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                break
+        except OSError:
+            if process.poll() is not None or time.monotonic() > deadline:
+                raise SystemExit("the editor server did not start")
+            time.sleep(0.2)
+    url = f"http://127.0.0.1:{port}/#token={token}"
+    return {"url": url, "pid": process.pid, "opened": bool(open_browser and webbrowser.open(url))}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Serve the Coding Opus playbooks editor on 127.0.0.1")
     parser.add_argument("--policy", type=Path, required=True)
-    parser.add_argument("--port", type=int, required=True)
-    parser.add_argument("--token", required=True)
+    parser.add_argument("--launch", action="store_true", help="start a detached server and print its URL")
+    parser.add_argument("--no-open", action="store_true", help="with --launch, do not open a browser")
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--token")
     args = parser.parse_args()
-    serve(args.policy.expanduser().resolve(), args.port, args.token)
+    policy_path = args.policy.expanduser().resolve()
+    if args.launch:
+        print(json.dumps(launch(policy_path, not args.no_open)))
+        return 0
+    if args.port is None or not args.token:
+        parser.error("--port and --token are required without --launch")
+    serve(policy_path, args.port, args.token)
     return 0
 
 

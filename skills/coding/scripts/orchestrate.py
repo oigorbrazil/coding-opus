@@ -357,6 +357,10 @@ USER_PLAYBOOKS_FILE = "coding-opus-playbooks.yaml"
 
 
 def bundled_playbooks_path() -> Path:
+    # Tests pin the generic playbooks here; the shipped default is free to change.
+    configured = os.environ.get("CODING_OPUS_BUNDLED_PLAYBOOKS")
+    if configured:
+        return Path(configured).expanduser()
     return Path(__file__).resolve().parent.parent / PLAYBOOKS_FILE
 
 
@@ -1278,42 +1282,22 @@ EDITOR_SERVER = Path(__file__).resolve().parent / "editor_server.py"
 
 
 def start_editor(policy_path: Path, open_browser: bool = True) -> Dict[str, Any]:
-    """Serve the playbooks editor on 127.0.0.1 in the background, so the page can save the file."""
-    import secrets
-    import socket
+    """Serve the playbooks editor on 127.0.0.1 in the background, so the page can save the file.
 
+    The runner never imports a network module: editor_server.py picks the port, starts the
+    server and opens the browser, then prints where it lives.
+    """
     loaded_playbooks(policy_path)  # fail here, not in the browser, on unreadable playbooks
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    token = secrets.token_urlsafe(24)
-    command = [sys.executable, str(EDITOR_SERVER), "--policy", str(policy_path), "--port", str(port), "--token", token]
-    options: Dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-    if os.name == "nt":
-        options["creationflags"] = 0x00000008 | 0x00000200 | 0x08000000  # detached, new group, no window
-    else:
-        options["start_new_session"] = True
-    process = subprocess.Popen(command, **options)
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                break
-        except OSError:
-            if process.poll() is not None:
-                raise PlanError("the editor server stopped while starting")
-            time.sleep(0.2)
-    else:
-        raise PlanError("the editor server did not start within 10 seconds")
-    url = f"http://127.0.0.1:{port}/#token={token}"
-    opened = False
-    if open_browser:
-        import webbrowser
-
-        opened = webbrowser.open(url)
-    return {"url": url, "pid": process.pid, "opened": opened,
-            "playbooks": str(effective_playbooks_path(policy_path)),
-            "saveTo": str(user_playbooks_path(policy_path))}
+    command = [sys.executable, str(EDITOR_SERVER), "--launch", "--policy", str(policy_path)]
+    if not open_browser:
+        command.append("--no-open")
+    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=30)
+    if result.returncode != 0:
+        raise PlanError(f"the editor server did not start: {(result.stderr or result.stdout).strip()}")
+    payload = json.loads(result.stdout)
+    payload.update({"playbooks": str(effective_playbooks_path(policy_path)),
+                    "saveTo": str(user_playbooks_path(policy_path))})
+    return payload
 
 
 REPORT_TEMPLATE = EDITOR_TEMPLATE.with_name("report.html")

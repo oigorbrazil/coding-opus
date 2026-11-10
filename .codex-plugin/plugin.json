@@ -1,0 +1,29 @@
+{
+  "name": "coding",
+  "version": "32.0.0",
+  "description": "Coding Opus: a global second brain consulted before answering and planning, plus smart orchestration that hands bounded units to the cheapest capable Codex, Claude Code, Antigravity, Kimi or custom CLI worker.",
+  "author": {
+    "name": "oigorbrazil",
+    "url": "https://github.com/oigorbrazil"
+  },
+  "homepage": "https://github.com/oigorbrazil/coding-opus",
+  "repository": "https://github.com/oigorbrazil/coding-opus",
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Coding Opus",
+    "shortDescription": "Remember before working, delegate only what is cheaper elsewhere.",
+    "longDescription": "Consults a global second brain of decisions and notes before answering or planning, then picks a playbook and hands bounded units to Codex, Claude Code, Antigravity, Kimi or a custom CLI on the cheapest capable model, watching quota and reporting what each worker did and cost.",
+    "developerName": "oigorbrazil",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Consult the second brain, then orchestrate this task with the cheapest capable workers",
+      "Report what the last orchestration did and what it cost"
+    ]
+  }
+}
