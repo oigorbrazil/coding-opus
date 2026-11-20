@@ -27,7 +27,8 @@ def orchestrations_home() -> str:
     if policy:
         return os.path.join(os.path.dirname(os.path.expanduser(policy)), "orchestrations")
     if os.name == "nt":
-        base = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~/AppData/Roaming")), "CodingOpus")
+        # orchestrate.py moved the state out of %APPDATA% (see windows_state_dir) and migrates it on first use.
+        base = os.path.join(os.environ.get("USERPROFILE") or os.path.expanduser("~"), ".coding-opus")
     else:
         base = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "coding-opus")
     return os.path.join(base, "orchestrations")
@@ -98,6 +99,13 @@ def skip_hook(event: dict, now: float) -> bool:
 def full_hook_output(stdin_text: str) -> str:
     import orchestrate
 
+    event = json.loads(stdin_text) if stdin_text.strip() else {}
+    session = os.environ.get("CODING_OPUS_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID") or event.get("session_id")
+    if session:
+        try:
+            orchestrate.session_runtime(str(session))
+        except orchestrate.PlanError as error:
+            return f"Coding Opus: {error}\n"
     return orchestrate.hook_output(stdin_text)
 
 

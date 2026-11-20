@@ -1,10 +1,26 @@
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "python3 -S \"${CLAUDE_PLUGIN_ROOT}/skills/coding/scripts/hook.py\" 2>/dev/null || py -3 -S \"${CLAUDE_PLUGIN_ROOT}/skills/coding/scripts/hook.py\" 2>/dev/null || python -S \"${CLAUDE_PLUGIN_ROOT}/skills/coding/scripts/hook.py\" 2>/dev/null || true", "timeout": 10 } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"${CODING_OPUS_PYTHON:-}\" ]; then \"${CODING_OPUS_PYTHON}\" -S \"${CLAUDE_PLUGIN_ROOT}/skills/coding/scripts/hook.py\"; elif [ \"${OS:-}\" = \"Windows_NT\" ]; then py -3 -S \"${CLAUDE_PLUGIN_ROOT}/skills/coding/scripts/hook.py\"; else python3 -S \"${CLAUDE_PLUGIN_ROOT}/skills/coding/scripts/hook.py\"; fi",
+            "timeout": 10
+          }
+        ]
+      }
     ],
     "PostToolUse": [
-      { "hooks": [ { "type": "command", "command": "python3 -S \"${CLAUDE_PLUGIN_ROOT}/skills/coding/scripts/hook.py\" 2>/dev/null || py -3 -S \"${CLAUDE_PLUGIN_ROOT}/skills/coding/scripts/hook.py\" 2>/dev/null || python -S \"${CLAUDE_PLUGIN_ROOT}/skills/coding/scripts/hook.py\" 2>/dev/null || true", "timeout": 5 } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"${CODING_OPUS_PYTHON:-}\" ]; then \"${CODING_OPUS_PYTHON}\" -S \"${CLAUDE_PLUGIN_ROOT}/skills/coding/scripts/hook.py\"; elif [ \"${OS:-}\" = \"Windows_NT\" ]; then py -3 -S \"${CLAUDE_PLUGIN_ROOT}/skills/coding/scripts/hook.py\"; else python3 -S \"${CLAUDE_PLUGIN_ROOT}/skills/coding/scripts/hook.py\"; fi",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

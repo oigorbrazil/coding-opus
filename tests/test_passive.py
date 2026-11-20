@@ -12,6 +12,7 @@ from unittest import mock
 
 # Tests read the generic playbooks, not the personal default the skill ships.
 os.environ.setdefault("CODING_OPUS_BUNDLED_PLAYBOOKS", str(Path(__file__).resolve().parent / "fixtures" / "playbooks.yaml"))
+os.environ.setdefault("CODING_OPUS_TERMINALS", "0")
 
 SCRIPT = Path(__file__).resolve().parent.parent / "skills/coding/scripts/orchestrate.py"
 spec = importlib.util.spec_from_file_location("passive_runner", SCRIPT)
@@ -318,7 +319,7 @@ class PassiveTest(unittest.TestCase):
         self.assertEqual(r.current_folder(), global_folder)
         self.assertEqual((self.home / "current.json").read_bytes(), global_pointer)
 
-    def test_alethe_session_use_sets_pointer_without_global_fallback(self):
+    def test_session_use_sets_pointer_without_global_fallback(self):
         folder = Path(json.loads(self.call("new", "global"))["folder"])
         with mock.patch.dict(os.environ, {"CODING_OPUS_SESSION": "alternative"}):
             self.assertIsNone(r.current_folder())
@@ -607,11 +608,11 @@ class PassiveTest(unittest.TestCase):
         # Claude Code names a project folder after the absolute path with every non-alphanumeric
         # character replaced by "-", so the drive letter stays on Windows.
         if os.name == "nt":
-            self.assertEqual(r.claude_project_folder(Path("C:/Users/kc/Developer/alethe/poc")).name,
-                             "C--Users-kc-Developer-alethe-poc")
+            self.assertEqual(r.claude_project_folder(Path("C:/Users/dev/Developer/coding-opus/poc")).name,
+                             "C--Users-dev-Developer-coding-opus-poc")
         else:
-            self.assertEqual(r.claude_project_folder(Path("/Users/kauamiguel/Developer/alethe/poc")).name,
-                             "-Users-kauamiguel-Developer-alethe-poc")
+            self.assertEqual(r.claude_project_folder(Path("/Users/dev/Developer/coding-opus/poc")).name,
+                             "-Users-dev-Developer-coding-opus-poc")
         folder.mkdir(parents=True)
         old = folder / "old.jsonl"
         newest = folder / "new.jsonl"

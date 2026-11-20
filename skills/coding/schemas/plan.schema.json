@@ -68,6 +68,7 @@
         "taskFile": { "type": "string", "minLength": 1 },
         "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
         "isolate": { "type": "boolean", "default": false },
+        "branch": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$" },
         "seedPaths": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
@@ -83,7 +84,12 @@
         "outputFormat": { "enum": ["text", "json", "jsonl"] },
         "allowUnsafe": { "type": "boolean", "default": false },
         "mcp": { "type": "boolean", "default": false },
-        "idleTimeoutSeconds": { "type": "integer", "minimum": 5, "maximum": 86400 }
+        "idleTimeoutSeconds": { "type": "integer", "minimum": 5, "maximum": 86400 },
+        "account": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$",
+          "description": "Pin a codex or claude worker to one account from `account list` (default is the CLI's own login); unpinned workers move to the next account when one hits its usage limit."
+        }
       },
       "allOf": [
         {

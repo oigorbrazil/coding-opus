@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "coding",
-      "version": "32.0.0",
+      "version": "36.0.0",
       "description": "Global second brain plus orchestration of CLI agents with playbooks that save context and quota.",
       "source": {
         "source": "local",

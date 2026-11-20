@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import codecs
 import concurrent.futures
 import copy
 import datetime as dt
@@ -14,6 +15,7 @@ import math
 import os
 import re
 import shutil
+import shlex
 import signal
 import subprocess
 import sys
@@ -166,6 +168,7 @@ DEFAULT_POLICY: Dict[str, Any] = {
     "conserveProviders": [],
     "maxWorkers": MAX_WORKERS,
     "maxConcurrent": 4,
+    "terminals": True,
     "budget": {},
     "modelTiers": {},
     "trust": {"allowUnsafe": False, "cwdRoots": [], "workerEnv": []},
@@ -307,8 +310,67 @@ def skill_version() -> Optional[str]:
     except OSError:
         return None
     frontmatter = text.split("\n---", 1)[0]
-    match = re.search(r'^\s+version:\s*"?([0-9][0-9.]*)"?\s*$', frontmatter, re.MULTILINE)
+    match = re.search(r'^\s+version:\s*["\']?([0-9][0-9.]*)["\']?\s*$', frontmatter, re.MULTILINE)
     return match.group(1) if match else None
+
+
+GUIDE_PHASES = {
+    "remote-control": "remote-control.md",
+    "chat-memory": "chat-memory.md",
+    "orquestracao": "orquestracao.md", "memoria": "memoria.md",
+    "playbooks": "playbooks.md", "briefs": "briefs.md", "providers": "providers.md",
+    "routing": "routing.md", "operations": "operations.md", "onboarding": "onboarding.md",
+    "manual": "manual.md", "diagram": "diagram.md", "handoff": "handoff.md",
+}
+
+
+def runtime_identity() -> Dict[str, Any]:
+    runner = Path(__file__).resolve()
+    return {
+        "runner": str(runner), "skillRoot": str(runner.parent.parent),
+        "version": skill_version(), "runnerSha256": hashlib.sha256(runner.read_bytes()).hexdigest(),
+        "python": str(Path(sys.executable).resolve()), "pythonVersion": sys.version.split()[0],
+    }
+
+
+def session_runtime(session: str) -> Dict[str, Any]:
+    identity = runtime_identity()
+    path = orchestrations_home() / "runtime" / session_state_filename(session)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("x", encoding="utf-8") as handle:
+            json.dump(identity, handle, indent=2)
+    except FileExistsError:
+        selected = read_json(path)
+        if not isinstance(selected, dict):
+            raise PlanError(f"invalid runtime record: {path}; stop without replacing it")
+        if selected != identity:
+            changed = ", ".join(key for key in identity if selected.get(key) != identity[key])
+            raise PlanError(f"runtime mismatch for session {session!r} ({changed}): "
+                            f"selected runner {selected.get('runner')}, Python {selected.get('python')}; "
+                            f"invoked runner {identity['runner']}, Python {identity['python']}. "
+                            "Stop; do not try another runner or Python. "
+                            "Start a new --session-id only when explicitly changing runtime.")
+    return {**identity, "sessionId": session, "record": str(path),
+            "command": [identity["python"], identity["runner"], "--session-id", session]}
+
+
+def guide_output(phase: Optional[str]) -> str:
+    identity = runtime_identity()
+    header = f"Coding Opus {identity['version']} | {identity['runner']}\nPython: {identity['python']}\n"
+    if phase is None:
+        return header + "\nLoad one phase with guide <phase>:\n" + "\n".join(GUIDE_PHASES) + "\n"
+    source = Path(identity["skillRoot"]) / "references" / GUIDE_PHASES[phase]
+    try:
+        return header + f"Reference: {source}\n\n" + source.read_text(encoding="utf-8")
+    except OSError as error:
+        raise PlanError(f"cannot load guide {source}: {error}") from error
+
+
+def windows_state_dir() -> Path:
+    # Not %APPDATA%: a packaged app such as the Claude desktop app virtualizes AppData, so files its
+    # sessions write there land in a private copy that other apps and terminals never see.
+    return Path(os.environ.get("USERPROFILE") or Path.home()) / ".coding-opus"
 
 
 def default_policy_path() -> Path:
@@ -316,10 +378,11 @@ def default_policy_path() -> Path:
     if configured:
         return Path(configured).expanduser()
     if os.name == "nt":
-        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-        path = base / "CodingOpus" / "coding-opus-orchestrate.json"
-        migrate_legacy_state(base / "Alethe", path.parent, {"alethe-": "coding-opus-"})
-        return path
+        target = windows_state_dir()
+        appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        migrate_legacy_state(appdata / "CodingOpus", target, {})
+        migrate_legacy_state(appdata / "Alethe", target, {"alethe-": "coding-opus-"})
+        return target / "coding-opus-orchestrate.json"
     base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     path = base / "coding-opus" / "orchestrate.json"
     migrate_legacy_state(base / "alethe", path.parent, {"alethe-": "coding-opus-"})
@@ -327,10 +390,9 @@ def default_policy_path() -> Path:
 
 
 def migrate_legacy_state(legacy: Path, target: Path, renames: Dict[str, str]) -> None:
-    """Primeira execução depois da troca de nome: copia o estado da Alethe para a pasta nova.
+    """Copy an earlier state folder (Alethe's, or %APPDATA%\\CodingOpus) into a new one that does not exist yet.
 
-    Copia, nunca move: a pasta antiga continua intacta para o app ou a skill Alethe originais.
-    Só roda quando a pasta nova ainda não existe e a antiga existe.
+    It copies and never moves, so the old folder stays intact for older apps and copies of the skill.
     """
     if target.exists() or not legacy.is_dir():
         return
@@ -341,15 +403,15 @@ def migrate_legacy_state(legacy: Path, target: Path, renames: Dict[str, str]) ->
                 if child.is_file() and child.name.startswith(old):
                     child.rename(child.with_name(new + child.name[len(old):]))
         current = target / "orchestrations" / "current.json"
-        if current.is_file():  # a orquestração atual passa a apontar para a cópia nova
+        if current.is_file():  # point the current orchestration at the copy
             data = json.loads(current.read_text(encoding="utf-8-sig"))
             folder = str(data.get("folder") or "")
             if folder.lower().startswith(str(legacy).lower()):
                 data["folder"] = str(target) + folder[len(str(legacy)):]
                 current.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        (target / "MIGRATED_FROM.txt").write_text(f"Copiado de {legacy}\n", encoding="utf-8")
+        (target / "MIGRATED_FROM.txt").write_text(f"Copied from {legacy}\n", encoding="utf-8")
     except (OSError, ValueError):
-        pass  # sem migração, o runner segue com padrões; nada é perdido na pasta antiga
+        pass  # without a migration the runner uses its defaults; nothing in the old folder is lost
 
 
 PLAYBOOKS_FILE = "playbooks.yaml"
@@ -1134,10 +1196,12 @@ def codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).expanduser()
 
 
-def codex_quota(thread_id: Optional[str] = None, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+def codex_quota(
+    thread_id: Optional[str] = None, path: Optional[Path] = None, home: Optional[Path] = None,
+) -> Optional[Dict[str, Any]]:
     try:
         if path is None:
-            paths = list((codex_home() / "sessions").glob("*/*/*/rollout-*.jsonl"))
+            paths = list(((home or codex_home()) / "sessions").glob("*/*/*/rollout-*.jsonl"))
             if not paths:
                 return None
             preferred = [path for path in paths if thread_id and thread_id in path.name]
@@ -1177,6 +1241,350 @@ def codex_quota(thread_id: Optional[str] = None, path: Optional[Path] = None) ->
         observed = timestamp(event.get("timestamp")) or timestamp(stat.st_mtime)
         return {"provider": "codex", "windows": windows, "observedAt": observed.isoformat(), "source": str(path)}
     return None
+
+
+ACCOUNTS_FILE = "coding-opus-accounts.json"
+# Coding Agent 2 publishes its managed accounts in files with this prefix (coding-opus-accounts-export.ts).
+LINKED_ACCOUNTS_PREFIX = "coding-agent-accounts"
+CODING_AGENT_CLIS = ("coding-agent", "coding", "orca")
+DEFAULT_ACCOUNT = "default"
+ACCOUNT_NAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
+# Each account is its own CLI home: the CLI keeps that account's login, sessions and quota there.
+ACCOUNT_PROVIDERS: Dict[str, Dict[str, Any]] = {
+    "codex": {"env": "CODEX_HOME", "login": ("login",), "copy": ("config.toml",)},
+    "claude": {"env": "CLAUDE_CONFIG_DIR", "login": ("auth", "login", "--claudeai"), "copy": ("settings.json",)},
+}
+ACCOUNT_RETRY_NOTE = (
+    "\n\nNote from the runner: an earlier attempt at this task stopped at a usage limit on another account. "
+    "The working directory may already hold part of that attempt's changes; check them and continue from there "
+    "instead of starting over.\n"
+)
+
+
+def default_account_home(provider: str) -> Path:
+    if provider == "codex":
+        return codex_home()
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))).expanduser()
+
+
+def accounts_path(policy_path: Path) -> Path:
+    return policy_path.with_name(ACCOUNTS_FILE)
+
+
+def accounts_root(policy_path: Path) -> Path:
+    return policy_path.parent / "accounts"
+
+
+def validate_account_name(name: Any, label: str = "account name") -> str:
+    if not isinstance(name, str) or not ACCOUNT_NAME_PATTERN.fullmatch(name):
+        raise PlanError(f"{label} must be 1-32 lowercase letters, digits, - or _, starting with a letter or digit")
+    return name
+
+
+def account_provider(provider: Any) -> str:
+    if provider not in ACCOUNT_PROVIDERS:
+        raise PlanError(f"accounts work with {' and '.join(ACCOUNT_PROVIDERS)}, not {provider!r}")
+    return provider
+
+
+def same_path(left: Path, right: Path) -> bool:
+    try:
+        return os.path.normcase(str(left.resolve())) == os.path.normcase(str(right.resolve()))
+    except OSError:
+        return os.path.normcase(str(left)) == os.path.normcase(str(right))
+
+
+def load_accounts(policy_path: Path) -> Dict[str, Any]:
+    """Accounts Coding Opus made itself; Coding Agent 2's come from linked_accounts."""
+    path = accounts_path(policy_path)
+    empty = {"providers": {provider: [] for provider in ACCOUNT_PROVIDERS}, "order": {}}
+    if not path.exists():
+        return empty
+    raw = read_json(path)
+    if not isinstance(raw, dict) or not isinstance(raw.get("providers", {}), dict) or not isinstance(raw.get("order", {}), dict):
+        raise PlanError(f"{path} must hold providers and order objects")
+    data = copy.deepcopy(empty)
+    for provider, entries in raw.get("providers", {}).items():
+        account_provider(provider)
+        if not isinstance(entries, list):
+            raise PlanError(f"{path}: providers.{provider} must be a list")
+        seen = set()
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("home"), str) or not entry["home"]:
+                raise PlanError(f"{path}: every {provider} account needs a name and a home")
+            name = validate_account_name(entry.get("name"), f"{path}: {provider} account name")
+            if name == DEFAULT_ACCOUNT or name in seen:
+                raise PlanError(f"{path}: {provider} account {name} is reserved or repeated")
+            seen.add(name)
+            data["providers"][provider].append({"name": name, "home": entry["home"], "addedAt": entry.get("addedAt")})
+    for provider, names in raw.get("order", {}).items():
+        account_provider(provider)
+        # Names are checked against the live list when used: a Coding Agent 2 account may come and go.
+        if not isinstance(names, list) or not names or len(set(names)) != len(names):
+            raise PlanError(f"{path}: order.{provider} must list accounts once each")
+        data["order"][provider] = [validate_account_name(name, f"{path}: order.{provider}") for name in names]
+    return data
+
+
+def save_accounts(policy_path: Path, data: Dict[str, Any]) -> None:
+    atomic_write_json(accounts_path(policy_path), {"version": 1, "providers": data["providers"], "order": data["order"]})
+
+
+def linked_account_files(policy_path: Path) -> List[Path]:
+    return sorted(policy_path.parent.glob(f"{LINKED_ACCOUNTS_PREFIX}*.json"))
+
+
+def email_account_name(email: str, taken: set, account_id: str) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", email.lower()).strip("-_")[:32].rstrip("-_") or "account"
+    if not ACCOUNT_NAME_PATTERN.fullmatch(base):
+        base = "account"
+    name = base
+    if name in taken or name == DEFAULT_ACCOUNT:
+        suffix = "-" + (re.sub(r"[^a-z0-9]", "", account_id.lower())[:6] or uuid.uuid4().hex[:6])
+        name = base[:32 - len(suffix)].rstrip("-_") + suffix
+    return name
+
+
+def linked_accounts(policy_path: Path, taken: Optional[Dict[str, set]] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """Accounts Coding Agent 2 manages, read from the files it publishes; never their credentials."""
+    result: Dict[str, List[Dict[str, Any]]] = {provider: [] for provider in ACCOUNT_PROVIDERS}
+    names = {provider: set((taken or {}).get(provider, set())) for provider in ACCOUNT_PROVIDERS}
+    homes: List[Path] = []
+    for path in linked_account_files(policy_path):
+        try:
+            raw = read_json(path)
+        except PlanError:
+            continue
+        if not isinstance(raw, dict) or raw.get("version") != 1 or not isinstance(raw.get("providers"), dict):
+            continue
+        active = raw.get("active") if isinstance(raw.get("active"), dict) else {}
+        for provider in ACCOUNT_PROVIDERS:
+            entries = raw["providers"].get(provider)
+            for entry in entries if isinstance(entries, list) else []:
+                if not isinstance(entry, dict) or not all(
+                        isinstance(entry.get(field), str) and entry[field] for field in ("id", "email", "home")):
+                    continue
+                home = Path(entry["home"])
+                if not home.is_absolute() or any(same_path(home, seen) for seen in homes):
+                    continue
+                homes.append(home)
+                name = email_account_name(entry["email"], names[provider], entry["id"])
+                names[provider].add(name)
+                result[provider].append({
+                    "name": name, "home": str(home), "linked": True, "id": entry["id"], "email": entry["email"],
+                    "label": entry.get("label") if isinstance(entry.get("label"), str) else None,
+                    "active": active.get(provider) == entry["id"],
+                    # Coding Agent 2 prepares a Claude account's folder the first time the account is used there.
+                    "available": home.is_dir(), "source": str(path),
+                })
+    return result
+
+
+def account_entries(policy_path: Path, provider: str) -> List[Dict[str, Any]]:
+    """Named accounts, local first, then Coding Agent 2's; the default account is not listed."""
+    local = [{**entry, "linked": False, "available": True}
+             for entry in load_accounts(policy_path)["providers"].get(provider, [])]
+    taken = {provider: {entry["name"] for entry in local}}
+    linked = [entry for entry in linked_accounts(policy_path, taken)[provider]
+              if not same_path(Path(entry["home"]), default_account_home(provider))]
+    return [*local, *linked]
+
+
+def account_rotation(policy_path: Path, provider: str) -> List[str]:
+    """Accounts in the order workers try them; empty when the provider has no named account."""
+    if provider not in ACCOUNT_PROVIDERS:
+        return []
+    names = [entry["name"] for entry in account_entries(policy_path, provider) if entry["available"]]
+    if not names:
+        return []
+    order = [name for name in load_accounts(policy_path)["order"].get(provider, [])
+             if name == DEFAULT_ACCOUNT or name in names]
+    if order:
+        # An account left out of a saved order still runs, after the ordered ones.
+        return [*order, *(name for name in names if name not in order)]
+    linked = {entry["name"] for entry in account_entries(policy_path, provider) if entry.get("linked")}
+    return [DEFAULT_ACCOUNT, *(name for name in names if name in linked), *(name for name in names if name not in linked)]
+
+
+def account_home(policy_path: Path, provider: str, name: str) -> Optional[Path]:
+    """The account's CLI home; None for the default account, which keeps the user's own environment."""
+    if name == DEFAULT_ACCOUNT:
+        return None
+    for entry in account_entries(policy_path, provider):
+        if entry["name"] == name:
+            if not entry["available"]:
+                raise PlanError(f"{provider} account {name} is not ready yet; use it once in Coding Agent 2 first")
+            return Path(entry["home"])
+    raise PlanError(f"{provider} has no account {name}; add it with: orchestrate.py account add {provider}")
+
+
+def quota_key(provider: str, account: Optional[str]) -> str:
+    return provider if not account or account == DEFAULT_ACCOUNT else f"{provider}@{account}"
+
+
+def account_environment(provider: str, home: Optional[Path]) -> Dict[str, str]:
+    environment = {key: value for key, value in os.environ.items() if key != "CLAUDECODE"}
+    if home is not None:
+        environment[ACCOUNT_PROVIDERS[provider]["env"]] = str(home)
+    return environment
+
+
+def coding_agent_cli() -> Optional[List[str]]:
+    for name in CODING_AGENT_CLIS:
+        found = shutil.which(name)
+        if found:
+            return launch_command(found)
+    return None
+
+
+def run_account_login(policy_path: Path, provider: str, name: str) -> int:
+    provider = account_provider(provider)
+    entry = next((item for item in account_entries(policy_path, provider) if item["name"] == name), None)
+    if entry is None:
+        raise PlanError(f"{provider} has no account {name}")
+    if entry.get("linked"):
+        raise PlanError(f"{name} belongs to Coding Agent 2; sign in again there (Settings > AI Provider Accounts)")
+    home = Path(entry["home"])
+    home.mkdir(parents=True, exist_ok=True)
+    args = [*launch_command(resolve_executable(provider)), *ACCOUNT_PROVIDERS[provider]["login"]]
+    # The login is interactive: it inherits this terminal and stores its credentials only in the account home.
+    return subprocess.run(args, env=account_environment(provider, home), check=False).returncode
+
+
+def add_account_in_coding_agent(provider: str) -> int:
+    """With Coding Agent 2 installed, it owns the accounts: its CLI signs in and registers the account, and the
+    account reaches Coding Opus through the file Coding Agent 2 publishes."""
+    cli = coding_agent_cli()
+    if cli is None:
+        raise PlanError("Coding Agent 2 manages the accounts on this machine, but its CLI is not on PATH; add the "
+                        "account in Coding Agent 2 (Settings > AI Provider Accounts), or pass --local to keep it "
+                        "only in Coding Opus")
+    return subprocess.run([*cli, "account", "add", "--agent", provider],
+                          env={key: value for key, value in os.environ.items() if key != "CLAUDECODE"},
+                          check=False).returncode
+
+
+def add_account(policy_path: Path, provider: str, name: str) -> Dict[str, Any]:
+    provider = account_provider(provider)
+    name = validate_account_name(name)
+    if name == DEFAULT_ACCOUNT:
+        raise PlanError(f"{DEFAULT_ACCOUNT} is the account the {provider} CLI already uses; pick another name")
+    data = load_accounts(policy_path)
+    if any(entry["name"] == name for entry in account_entries(policy_path, provider)):
+        raise PlanError(f"{provider} already has an account named {name}")
+    home = accounts_root(policy_path) / provider / name
+    home.mkdir(parents=True, exist_ok=True)
+    copied = []
+    for file_name in ACCOUNT_PROVIDERS[provider]["copy"]:
+        # Settings carry over so workers behave the same; credentials never do.
+        source, target = default_account_home(provider) / file_name, home / file_name
+        if source.is_file() and not target.exists():
+            shutil.copy2(source, target)
+            copied.append(file_name)
+    entry = {"name": name, "home": str(home), "addedAt": now_iso()}
+    data["providers"][provider].append(entry)
+    if data["order"].get(provider):
+        data["order"][provider].append(name)
+    save_accounts(policy_path, data)
+    return {**entry, "provider": provider, "copiedSettings": copied}
+
+
+def remove_account(policy_path: Path, provider: str, name: str, delete_home: bool) -> Dict[str, Any]:
+    provider = account_provider(provider)
+    data = load_accounts(policy_path)
+    entry = next((item for item in data["providers"][provider] if item["name"] == name), None)
+    if entry is None:
+        if any(item["name"] == name for item in account_entries(policy_path, provider)):
+            raise PlanError(f"{name} belongs to Coding Agent 2; remove it there (Settings > AI Provider Accounts "
+                            "or `coding account rm`)")
+        raise PlanError(f"{provider} has no account {name}")
+    data["providers"][provider].remove(entry)
+    order = [item for item in data["order"].get(provider, []) if item != name]
+    if order:
+        data["order"][provider] = order
+    else:
+        data["order"].pop(provider, None)
+    save_accounts(policy_path, data)
+    deleted = False
+    home = Path(entry["home"])
+    if delete_home and home.is_dir():
+        if not is_inside(home.resolve(), accounts_root(policy_path).resolve()):
+            raise PlanError(f"{home} is outside {accounts_root(policy_path)}; delete it yourself")
+        shutil.rmtree(home)
+        deleted = True
+    return {"provider": provider, "name": name, "home": entry["home"], "deletedHome": deleted}
+
+
+def order_accounts(policy_path: Path, provider: str, names: Sequence[str]) -> List[str]:
+    provider = account_provider(provider)
+    data = load_accounts(policy_path)
+    known = {DEFAULT_ACCOUNT, *(entry["name"] for entry in account_entries(policy_path, provider))}
+    unknown = [name for name in names if name not in known]
+    if not names or unknown or len(set(names)) != len(names):
+        raise PlanError(f"order needs known {provider} accounts once each ({', '.join(sorted(known))})"
+                        + (f"; unknown: {', '.join(unknown)}" if unknown else ""))
+    data["order"][provider] = list(names)
+    save_accounts(policy_path, data)
+    return account_rotation(policy_path, provider)
+
+
+def accounts_payload(policy_path: Path, check_login: bool = True) -> Dict[str, Any]:
+    usage = usage_payload(policy_path, refresh=True)
+    providers = {}
+    for provider in ACCOUNT_PROVIDERS:
+        entries = {entry["name"]: entry for entry in account_entries(policy_path, provider)}
+        rotation = account_rotation(policy_path, provider)
+        names = [*(rotation or [DEFAULT_ACCOUNT]), *(name for name in entries if name not in rotation)]
+        launch = None
+        if check_login and entries:
+            try:
+                launch = launch_command(resolve_executable(provider))
+            except PlanError:
+                launch = None
+        listed = []
+        for name in names:
+            entry = entries.get(name, {})
+            home = entry.get("home")
+            key = quota_key(provider, name)
+            reading = usage["providers"].get(key) if key == provider else usage["accounts"].get(key)
+            logged_in = None
+            if launch and entry.get("available", True):
+                logged_in = provider_logged_in(provider, launch, account_environment(provider, Path(home) if home else None))
+            listed.append({
+                "name": name, "home": home or str(default_account_home(provider)), "default": home is None,
+                "from": "coding-agent" if entry.get("linked") else "coding-opus",
+                "email": entry.get("email"), "activeInCodingAgent": entry.get("active", False),
+                "ready": entry.get("available", True), "inRotation": name in rotation or not rotation,
+                "loggedIn": logged_in, "quota": reading,
+            })
+        providers[provider] = listed
+    return {"path": str(accounts_path(policy_path)),
+            "codingAgentFiles": [str(path) for path in linked_account_files(policy_path)],
+            "providers": providers}
+
+
+def quota_headline(reading: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The fullest main window of one usage reading, for a one-line display."""
+    windows = (reading or {}).get("windows") or {}
+    main = [(name, windows[name]) for name in MAIN_QUOTA_WINDOWS if name in windows]
+    if not main:
+        return None
+    name, window = max(main, key=lambda item: item[1]["usedPercent"])
+    return {"window": name, "usedPercent": window["usedPercent"], "resetsAt": window["resetsAt"],
+            "low": window["low"], "blocked": window["blocked"], "stale": window["stale"]}
+
+
+def accounts_summary(policy_path: Path) -> Dict[str, Any]:
+    """What the playbooks editor shows: every account in rotation order, without asking each CLI for its login."""
+    payload = accounts_payload(policy_path, check_login=False)
+    providers = {}
+    for provider, rows in payload["providers"].items():
+        providers[provider] = [{
+            "name": row["name"], "from": "cli" if row["default"] else row["from"], "email": row["email"],
+            "ready": row["ready"], "inRotation": row["inRotation"],
+            "activeInCodingAgent": row["activeInCodingAgent"], "quota": quota_headline(row["quota"]),
+        } for row in rows]
+    return {"providers": providers}
 
 
 def usage_file(policy_path: Path) -> Dict[str, Any]:
@@ -1223,7 +1631,7 @@ def save_usage(policy_path: Path, quota: Optional[Dict[str, Any]]) -> None:
         data = usage_file(policy_path)
         providers = dict(data["providers"])
         if quota:
-            provider = quota["provider"]
+            provider = quota_key(quota["provider"], quota.get("account"))
             previous = providers.get(provider, {})
             old = timestamp(previous.get("observedAt"))
             observed = timestamp(quota.get("observedAt"))
@@ -1249,11 +1657,17 @@ def usage_payload(
     current = now or dt.datetime.now(dt.timezone.utc)
     if refresh:
         save_usage(policy_path, codex_quota())
+        try:
+            codex_accounts = [entry for entry in account_entries(policy_path, "codex") if entry["available"]]
+        except (OSError, PlanError):
+            codex_accounts = []
+        for entry in codex_accounts:
+            quota = codex_quota(home=Path(entry["home"]))
+            save_usage(policy_path, {**quota, "account": entry["name"]} if quota else None)
     threshold, stop = quota_thresholds(policy_path)
     readings = saved_usage(policy_path) if readings is None else readings
-    providers = {}
-    for provider in BUILTIN_PROVIDERS:
-        reading = readings.get(provider, {})
+
+    def reading_payload(provider: str, reading: Dict[str, Any]) -> Dict[str, Any]:
         observed = timestamp(reading.get("observedAt"))
         age = max(0.0, (current - observed).total_seconds() / 60) if observed else None
         windows = {}
@@ -1268,13 +1682,17 @@ def usage_payload(
                              "low": not reset and window["usedPercent"] >= threshold,
                              "blocked": not reset and window["usedPercent"] >= stop}
         main = [windows[name] for name in MAIN_QUOTA_WINDOWS if name in windows]
-        providers[provider] = {"windows": windows, "observedAt": reading.get("observedAt"),
+        return {"windows": windows, "observedAt": reading.get("observedAt"),
             "ageMinutes": round(age, 2) if age is not None else None,
             "low": any(window["low"] for window in main), "blocked": any(window["blocked"] for window in main),
             "stale": age is None or age > USAGE_STALE_MINUTES, "source": reading.get("source"),
             "missing": not windows, "reset": any(window["reset"] for window in windows.values())}
+
+    providers = {provider: reading_payload(provider, readings.get(provider, {})) for provider in BUILTIN_PROVIDERS}
+    # Named accounts ("codex@work") keep their own readings, so one account's limit never blocks another.
+    accounts = {key: reading_payload(key, reading) for key, reading in readings.items() if "@" in key}
     return {"version": 1, "criticalThreshold": threshold, "stopAt": stop,
-            "cachePath": str(policy_path.with_name(USAGE_FILE)), "providers": providers}
+            "cachePath": str(policy_path.with_name(USAGE_FILE)), "providers": providers, "accounts": accounts}
 
 
 EDITOR_TEMPLATE = Path(__file__).resolve().parent.parent / "assets" / "editor.html"
@@ -1348,11 +1766,14 @@ def quota_refusal(workers: Sequence[Dict[str, Any]], policy_path: Path) -> Optio
         provider = worker["provider"]
         if provider not in QUOTA_PROVIDERS:
             continue
-        reading = usage["providers"][provider]["windows"]
+        key = quota_key(provider, worker.get("account"))
+        found = usage["providers"].get(key) if key == provider else usage["accounts"].get(key)
+        reading = found["windows"] if found else {}
         blocked = [(name, reading[name]) for name in worker_windows(worker) if name in reading and reading[name]["blocked"]]
         if blocked:
             name, window = max(blocked, key=lambda item: item[1]["usedPercent"])
-            return (f"{provider} is at {window['usedPercent']:g}% of its {name} window, at or past the "
+            label = provider if key == provider else f"{provider} account {worker['account']}"
+            return (f"{label} is at {window['usedPercent']:g}% of its {name} window, at or past the "
                     f"{usage['stopAt']:g}% stop line (resets {local_clock(window['resetsAt'])}); ask the user to wait "
                     "for the reset, move the work to another provider, or confirm --allow-low-quota")
     return None
@@ -1473,10 +1894,15 @@ def usage_summary(payload: Dict[str, Any]) -> List[str]:
     return lines
 
 
-def worker_quota(provider: str, values: Sequence[Any], policy_path: Path) -> Optional[Dict[str, Any]]:
+def worker_quota(
+    provider: str, values: Sequence[Any], policy_path: Path,
+    account: Optional[str] = None, home: Optional[Path] = None,
+) -> Optional[Dict[str, Any]]:
     quota = claude_quota(values, now_iso()) if provider == "claude" else None
     if provider == "codex":
-        quota = codex_quota(extract_session(values))
+        quota = codex_quota(extract_session(values), home=home)
+    if quota and account and account != DEFAULT_ACCOUNT:
+        quota = {**quota, "account": account}
     save_usage(policy_path, quota)
     return quota
 
@@ -1613,6 +2039,34 @@ def models_payload(policy_path: Path, now: Optional[dt.datetime] = None) -> Dict
         providers[provider] = {"billing": table["billing"].get(provider), "models": models}
     return {"version": 1, "currency": table["currency"], "unit": table["unit"],
             "overridePath": table["overridePath"], "providers": providers}
+
+
+def model_catalog(policy_path: Path) -> Dict[str, Any]:
+    """Models each provider offers now, for the editor's "Update models": Codex's own list (its
+    models_cache.json, the ones it shows in its picker), then the price table for every provider."""
+    providers: Dict[str, List[Dict[str, Any]]] = {}
+    cache = read_optional_json(codex_home() / "models_cache.json")
+    for entry in cache.get("models", []) if isinstance(cache, dict) and isinstance(cache.get("models"), list) else []:
+        if not isinstance(entry, dict) or entry.get("visibility", "list") != "list":
+            continue
+        slug = entry.get("slug") or entry.get("id")
+        if isinstance(slug, str) and SAFE_NAME_PATTERN.fullmatch(slug):
+            upgrade = entry.get("upgrade")
+            upgrade = upgrade.get("model") if isinstance(upgrade, dict) else upgrade
+            providers.setdefault("codex", []).append({
+                "id": slug, "source": "cli",
+                "description": entry.get("description") if isinstance(entry.get("description"), str) else None,
+                "upgrade": upgrade if isinstance(upgrade, str) else None,
+            })
+    try:
+        priced = load_prices(policy_path)["models"]
+    except PlanError:
+        priced = {}
+    for key in priced:
+        provider, model = key.split("/", 1)
+        if not any(item["id"] == model for item in providers.get(provider, [])):
+            providers.setdefault(provider, []).append({"id": model, "source": "prices"})
+    return {"providers": providers}
 
 
 def preview_usage_cost(workers: Sequence[Dict[str, Any]], policy_path: Path) -> Dict[str, Any]:
@@ -1842,6 +2296,9 @@ def validate_policy(raw: Any) -> Dict[str, Any]:
     onboarded = raw.get("onboarded", False)
     if not isinstance(onboarded, bool):
         raise PlanError("policy.onboarded must be a boolean")
+    terminals = raw.get("terminals", DEFAULT_POLICY["terminals"])
+    if not isinstance(terminals, bool):
+        raise PlanError("policy.terminals must be a boolean")
     backend = raw.get("backend", DEFAULT_POLICY["backend"])
     if backend not in ("auto", "skill", "mcp"):
         raise PlanError("policy.backend must be auto, skill or mcp")
@@ -1874,6 +2331,7 @@ def validate_policy(raw: Any) -> Dict[str, Any]:
         ),
         "maxWorkers": max_workers,
         "maxConcurrent": max_concurrent,
+        "terminals": terminals,
         "budget": validate_budget(raw.get("budget"), "policy.budget"),
         "modelTiers": validate_model_tiers(raw.get("modelTiers"), "policy.modelTiers"),
         "trust": validate_trust(raw.get("trust")),
@@ -2117,6 +2575,7 @@ def validate_plan(
             "taskFile",
             "timeoutSeconds",
             "isolate",
+            "branch",
             "seedPaths",
             "model",
             "effort",
@@ -2129,6 +2588,7 @@ def validate_plan(
             "allowUnsafe",
             "mcp",
             "idleTimeoutSeconds",
+            "account",
         }
         if unknown:
             raise PlanError(
@@ -2164,6 +2624,11 @@ def validate_plan(
             raise PlanError(f"worker {worker_id} isolate must be a boolean")
         if isolate and mode != "write":
             raise PlanError(f"worker {worker_id} only needs isolate in write mode")
+        branch = item.get("branch")
+        if branch is not None:
+            if not isolate or not isinstance(branch, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch):
+                raise PlanError(f"worker {worker_id} branch requires isolate and a safe branch name")
+            run_git(cwd, ["check-ref-format", "refs/heads/" + branch])
         seed_paths = item.get("seedPaths", [])
         if not isinstance(seed_paths, list):
             raise PlanError(f"worker {worker_id} seedPaths must be an array")
@@ -2202,6 +2667,7 @@ def validate_plan(
             "cwd": str(cwd),
             "timeoutSeconds": timeout,
             "isolate": isolate,
+            "branch": branch,
             "seedPaths": seed_paths,
             "model": model,
             "effort": effort,
@@ -2216,6 +2682,14 @@ def validate_plan(
             normalized.update(validate_custom(item, worker_id, policy["trust"]))
         chosen_provider = choose_provider(requested_provider, normalized, policy)
         normalized["provider"] = chosen_provider
+        account = item.get("account")
+        if account is not None:
+            account = validate_account_name(account, f"worker {worker_id}.account")
+            if chosen_provider not in ACCOUNT_PROVIDERS:
+                raise PlanError(f"worker {worker_id}: accounts work with {' and '.join(ACCOUNT_PROVIDERS)}, "
+                                f"not {chosen_provider}")
+            account_home(policy_path or default_policy_path(), chosen_provider, account)
+        normalized["account"] = account
         if chosen_provider == requested_provider:
             normalized["routingNote"] = None
         elif requested_provider == "auto":
@@ -2445,7 +2919,8 @@ def prepare_worktree(worker: Dict[str, Any], run_id: str) -> Path:
     exclude_worktrees(root)
     target.parent.mkdir(parents=True, exist_ok=True)
     safe_destination(root, target)
-    run_git(root, ["worktree", "add", "--detach", str(target), "HEAD"])
+    branch = worker.get("branch")
+    run_git(root, ["worktree", "add", *(["-b", branch] if branch else ["--detach"]), str(target), "HEAD"])
 
     try:
         seed_worktree(root, target, worker["seedPaths"])
@@ -2736,7 +3211,9 @@ def build_invocation(
     return [*launch, *custom_args], stdin_prompt, worker["outputFormat"], result_path
 
 
-def worker_environment(provider: str = "custom", trust: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+def worker_environment(
+    provider: str = "custom", trust: Optional[Dict[str, Any]] = None, account_home: Optional[str] = None,
+) -> Dict[str, str]:
     prefixes = {"claude": ("ANTHROPIC_", "CLAUDE_CODE_"), "codex": ("OPENAI_", "CODEX_"),
                 "agy": ("GEMINI_", "GOOGLE_"), "kimi": ("MOONSHOT_", "KIMI_")}.get(provider, ())
     allowed = {name.upper() for name in (trust or {}).get("workerEnv", [])}
@@ -2744,6 +3221,8 @@ def worker_environment(provider: str = "custom", trust: Optional[Dict[str, Any]]
         not re.search(r"(?:^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS)$", key, re.IGNORECASE)
         or key.upper().startswith(prefixes) or key.upper() in allowed)}
     environment[WORKER_ENV_FLAG] = "1"
+    if account_home and provider in ACCOUNT_PROVIDERS:
+        environment[ACCOUNT_PROVIDERS[provider]["env"]] = account_home
     return environment
 
 
@@ -3594,6 +4073,11 @@ class BudgetTracker:
                 self.state.update_budget(self.usage_snapshot())
             return None, cap
 
+    def reopen(self, worker_id: str) -> None:
+        """Let a worker retried on another account be admitted and counted again."""
+        with self.lock:
+            self.finished.discard(worker_id)
+
     def finish(self, worker_id: str, metrics: Dict[str, Any]) -> None:
         with self.lock:
             if worker_id in self.finished:
@@ -3624,7 +4108,185 @@ class BudgetTracker:
             return self.usage_snapshot()
 
 
-def run_worker(
+def terminals_enabled(policy: Dict[str, Any], override: Optional[bool]) -> bool:
+    return os.environ.get("CODING_OPUS_TERMINALS") != "0" and (
+        policy.get("terminals", DEFAULT_POLICY["terminals"]) if override is None else override
+    )
+
+
+def terminal_launcher() -> Tuple[str, str]:
+    if any(os.environ.get(key) for key in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")):
+        raise PlanError("SSH session has no local desktop")
+    if sys.platform == "win32":
+        wt = shutil.which("wt.exe")
+        return ("wt", wt) if wt else ("console", sys.executable)
+    if sys.platform == "darwin":
+        executable = shutil.which("osascript")
+        if executable:
+            return "osascript", executable
+    else:
+        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            raise PlanError("no DISPLAY or WAYLAND_DISPLAY desktop session")
+        for name in ("x-terminal-emulator", "gnome-terminal", "konsole", "xterm"):
+            executable = shutil.which(name)
+            if executable:
+                return name, executable
+    raise PlanError("no supported terminal launcher is installed")
+
+
+def follower_command(run_dir: Path, worker_id: str, title: str) -> List[str]:
+    return [sys.executable, "-B", str(Path(__file__).resolve()), "follow", str(run_dir), worker_id, "--title", title]
+
+
+def launch_terminal(launcher: Tuple[str, str], title: str, command: List[str], cwd: Path) -> None:
+    kind, executable = launcher
+    options: Dict[str, Any] = {"cwd": str(cwd), "stdin": subprocess.DEVNULL,
+                               "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "shell": False}
+    if kind == "wt":
+        # Windows Terminal treats semicolons as command separators even without a shell.
+        argv = [executable, "-w", "0", "nt", "--title", title.replace(";", "；"), "--suppressApplicationTitle", *command]
+        options["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    elif kind == "console":
+        argv = command
+        options["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+        options.pop("stdin")
+        options.pop("stdout")
+        options.pop("stderr")
+    elif kind == "osascript":
+        script = ('on run argv\n tell application "Terminal"\n'
+                  ' set workerTab to do script (item 1 of argv)\n'
+                  ' set custom title of workerTab to item 2 of argv\n end tell\nend run')
+        shell_command = "cd " + shlex.quote(str(cwd)) + " && " + shlex.join(command)
+        argv = [executable, "-e", script, shell_command, title]
+        options["start_new_session"] = True
+    else:
+        if kind == "gnome-terminal":
+            argv = [executable, "--title", title, "--", *command]
+        elif kind == "konsole":
+            argv = [executable, "-p", "tabtitle=" + title, "-e", *command]
+        else:
+            argv = [executable, "-T", title, "-e", *command]
+        options["start_new_session"] = True
+    process = subprocess.Popen(argv, **options)
+    if kind != "console":
+        try:
+            code = process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            return  # The terminal may itself stay open until the follower is closed.
+        if code:
+            raise PlanError(f"{executable} exited with code {code}")
+
+
+def spawn_terminal_observer(launcher: Tuple[str, str], title: str, command: List[str], cwd: Path, run_dir: Path) -> None:
+    argv = [*command, "--_terminal", launcher[0], "--_executable", launcher[1]]
+    options: Dict[str, Any] = {"cwd": str(cwd), "stdin": subprocess.DEVNULL,
+                               "stdout": subprocess.DEVNULL, "shell": False}
+    if sys.platform == "win32":
+        options["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+    else:
+        options["start_new_session"] = True
+    with (run_dir / RUNNER_STDERR_FILE).open("ab") as errors:
+        subprocess.Popen(argv, stderr=errors, **options)
+
+
+class WorkerTerminals:
+    def __init__(self, enabled: bool, title: str, run_dir: Path) -> None:
+        self.title, self.run_dir = title, run_dir
+        self.launcher: Optional[Tuple[str, str]] = None
+        if enabled:
+            try:
+                self.launcher = terminal_launcher()
+            except (OSError, PlanError) as error:
+                print(f"warning: worker terminals skipped: {error}", file=sys.stderr, flush=True)
+
+    def started(self, worker: Dict[str, Any], cwd: Path) -> None:
+        if self.launcher is None:
+            return
+        title = f"{self.title} · {worker['id']} · {worker['provider']}:{worker.get('model') or 'default'}"
+        title = "".join(char if char.isprintable() else " " for char in title)
+        if self.launcher[0] == "wt":
+            title = title.replace(";", "；")
+        try:
+            spawn_terminal_observer(self.launcher, title, follower_command(self.run_dir, worker["id"], title), cwd, self.run_dir)
+        except Exception as error:
+            print(f"warning: worker terminal for {worker['id']} could not open: {error}", file=sys.stderr, flush=True)
+
+
+def follow_worker(folder: Path, worker_id: str, title: Optional[str] = None) -> int:
+    if not ID_PATTERN.fullmatch(worker_id):
+        raise PlanError("follow worker id must be a safe worker id")
+    folder = folder.expanduser().resolve()
+    if not (folder / "workers" / worker_id).is_dir():
+        matches = [wave for wave in wave_dirs(folder) if (wave / "workers" / worker_id).is_dir()]
+        if len(matches) != 1:
+            raise PlanError(f"follow needs one wave containing worker {worker_id}; pass its run directory")
+        folder = matches[0]
+    worker_dir = folder / "workers" / worker_id
+    if title and sys.platform == "win32":
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleTitleW(title)
+    offsets = {"stdout.log": 0, "stderr.log": 0}
+    decoders = {name: codecs.getincrementaldecoder("utf-8")(errors="replace") for name in offsets}
+
+    def drain(final: bool = False) -> None:
+        for name in offsets:
+            try:
+                with (worker_dir / name).open("rb") as handle:
+                    handle.seek(offsets[name])
+                    chunk = handle.read(65536)
+                    while chunk:
+                        print(decoders[name].decode(chunk), end="", flush=True)
+                        offsets[name] = handle.tell()
+                        chunk = handle.read(65536)
+            except FileNotFoundError:
+                pass
+            if final:
+                print(decoders[name].decode(b"", final=True), end="", flush=True)
+
+    try:
+        while True:
+            drain()
+            outcome = read_optional_json(worker_dir / "outcome.json") or {}
+            state = read_optional_json(folder / "state.json") or {}
+            worker = state.get("workers", {}).get(worker_id, {})
+            if outcome.get("finishedAt") or outcome.get("status") in (*RAN_STATUSES, "skipped") or worker.get("status") in (*RAN_STATUSES, "skipped") or (
+                state.get("status") not in (None, "running")
+            ):
+                break
+            runner_pid = state.get("runnerPid")
+            if runner_pid and not pid_alive(runner_pid):
+                break
+            time.sleep(0.2)
+        drain(final=True)
+        try:
+            result = (worker_dir / "result.md").read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            result = ""
+        handoff = parse_handoff(result)
+        status = handoff["workerStatus"] or outcome.get("workerStatus") or "unavailable"
+        summary = handoff["workerSummary"] or outcome.get("workerSummary") or outcome.get("error") or "unavailable"
+        print(f"\nSTATUS: {status}\nSUMMARY: {summary}", flush=True)
+        session = outcome.get("sessionId") or worker.get("sessionId")
+        provider = outcome.get("provider") or worker.get("provider")
+        if session:
+            commands = {"codex": ["codex", "resume"], "claude": ["claude", "--resume"],
+                        "agy": ["agy", "--conversation"], "kimi": ["kimi", "--session"]}
+            if provider in commands:
+                argv = [*commands[provider], str(session)]
+                command = subprocess.list2cmdline(argv) if sys.platform == "win32" else shlex.join(argv)
+                print(f"Working directory: {outcome.get('cwd') or worker.get('cwd') or folder}\nResume: {command}", flush=True)
+            else:
+                print(f"Session: {session} (no interactive resume adapter for {provider})", flush=True)
+        try:
+            input("Press Enter to close...")
+        except EOFError:
+            pass
+    except KeyboardInterrupt:
+        return 130
+    return 0
+
+
+def run_worker_attempt(
     worker: Dict[str, Any],
     run_id: str,
     run_dir: Path,
@@ -3634,6 +4296,7 @@ def run_worker(
     registry: ProcessRegistry,
     tracker: BudgetTracker,
     checkouts: CheckoutRegistry,
+    terminals: Optional[WorkerTerminals] = None,
 ) -> Dict[str, Any]:
     worker_id = worker["id"]
     worker_dir = run_dir / "workers" / worker_id
@@ -3647,6 +4310,7 @@ def run_worker(
     outcome: Dict[str, Any] = {
         "id": worker_id,
         "provider": worker["provider"],
+        "account": worker.get("account"),
         "status": "failed",
         "exitCode": None,
         "timedOut": False,
@@ -3686,7 +4350,9 @@ def run_worker(
             policy_path = Path(state.value["policyPath"])
             if worker["provider"] in QUOTA_PROVIDERS and stdout_path.is_file():
                 values = json_values(stdout_path.read_text(encoding="utf-8", errors="replace"), "jsonl")
-                outcome["quota"] = worker_quota(worker["provider"], values, policy_path)
+                home = worker.get("accountHome")
+                outcome["quota"] = worker_quota(worker["provider"], values, policy_path,
+                                                worker.get("account"), Path(home) if home else None)
             else:
                 save_usage(policy_path, None)
         except (OSError, PlanError) as error:
@@ -3698,6 +4364,9 @@ def run_worker(
     if (run_dir / STOP_FILE).exists():
         tracker.finish(worker_id, {})
         return settle(status="skipped", error="stopped on request", failureKind="stopped")
+    if worker.get("accountError"):
+        tracker.finish(worker_id, {})
+        return settle(status="skipped", error=worker["accountError"], failureKind="account_missing")
     if not state.value.get("allowLowQuota"):
         try:
             quota_stop = quota_refusal([worker], Path(state.value["policyPath"]))
@@ -3750,13 +4419,15 @@ def run_worker(
                 tracker.finish(worker_id, {})
                 return settle(status="skipped", error="stopped on request", failureKind="stopped")
             process = start_process(args, cwd, stdin_mode, stdout_file, stderr_file,
-                                    worker_environment(worker["provider"], worker.get("trust")))
+                                    worker_environment(worker["provider"], worker.get("trust"), worker.get("accountHome")))
             registry.add(process)
             outcome["pid"] = process.pid
             outcome["processStartTime"] = process_start_time(process.pid)
             state.update_worker(worker_id, {"pid": process.pid, "processStartTime": outcome["processStartTime"]})
             if stdin_prompt and process.stdin is not None:
                 feed_stdin(process.stdin, worker["task"].encode("utf-8"))
+            if terminals is not None:
+                terminals.started(worker, cwd)
             exit_code, ended = watch_process(
                 process, worker_id, timeout, None if worker["provider"] == "agy" else worker["idleTimeoutSeconds"],
                 (stdout_path, stderr_path), state
@@ -3834,6 +4505,81 @@ def run_worker(
             stdoutPath=str(stdout_path),
             stderrPath=str(stderr_path),
         )
+
+
+def worker_accounts(worker: Dict[str, Any], policy_path: Path) -> List[str]:
+    """Accounts this worker may run on, in order; empty keeps the CLI's own environment."""
+    if worker.get("account"):
+        return [worker["account"]]
+    rotation = account_rotation(policy_path, worker["provider"])
+    # A resumed session lives in one account's home, so it never moves to another.
+    return rotation[:1] if worker.get("resume") else rotation
+
+
+def archive_attempt(worker_dir: Path, attempt: int) -> None:
+    for name in ("stdout.log", "stderr.log"):
+        source = worker_dir / name
+        if source.is_file():
+            os.replace(source, worker_dir / f"attempt-{attempt}-{name}")
+
+
+def run_worker(
+    worker: Dict[str, Any],
+    run_id: str,
+    run_dir: Path,
+    state: BatchState,
+    help_cache: Dict[str, str],
+    help_lock: threading.Lock,
+    registry: ProcessRegistry,
+    tracker: BudgetTracker,
+    checkouts: CheckoutRegistry,
+    terminals: Optional[WorkerTerminals] = None,
+) -> Dict[str, Any]:
+    """Run one worker; when its account hits a usage limit, retry it on the next account with room."""
+    policy_path = Path(state.value["policyPath"])
+    try:
+        rotation = worker_accounts(worker, policy_path)
+    except (OSError, PlanError):
+        rotation = []
+    if not rotation:
+        return run_worker_attempt(worker, run_id, run_dir, state, help_cache, help_lock, registry, tracker,
+                                  checkouts, terminals)
+    attempts: List[Dict[str, Any]] = []
+    while True:
+        tried = {attempt["account"] for attempt in attempts}
+        remaining = [name for name in rotation if name not in tried]
+        account = remaining[0]
+        if not state.value.get("allowLowQuota"):
+            for name in remaining:
+                try:
+                    if quota_refusal([{**worker, "account": name}], policy_path) is None:
+                        account = name
+                        break
+                except (OSError, PlanError):
+                    account = name
+                    break
+        current = {**worker, "account": account, "accountHome": None}
+        try:
+            home = account_home(policy_path, worker["provider"], account)
+            current["accountHome"] = str(home) if home else None
+        except (OSError, PlanError) as error:
+            current["accountError"] = str(error)
+        if attempts:
+            current["task"] = worker["task"] + ACCOUNT_RETRY_NOTE
+        outcome = run_worker_attempt(current, run_id, run_dir, state, help_cache, help_lock, registry, tracker,
+                                     checkouts, terminals)
+        left = [name for name in remaining if name != account]
+        if outcome.get("failureKind") != "rate_limited" or not left or (run_dir / STOP_FILE).exists():
+            if attempts:
+                outcome["accountAttempts"] = attempts
+                atomic_write_json(run_dir / "workers" / worker["id"] / "outcome.json", outcome)
+                state.update_worker(worker["id"], {"accountAttempts": attempts})
+            return outcome
+        attempts.append({"account": account, "failureKind": outcome.get("failureKind"),
+                         "resetHint": outcome.get("resetHint"), "sessionId": outcome.get("sessionId"),
+                         "finishedAt": outcome.get("finishedAt")})
+        archive_attempt(run_dir / "workers" / worker["id"], len(attempts))
+        tracker.reopen(worker["id"])
 
 
 def validate_orchestration_limits(raw: Any, label: str) -> Dict[str, Any]:
@@ -4973,14 +5719,34 @@ def install_interruption_handlers() -> Dict[int, Any]:
     return previous
 
 
+def account_quota_refusal(workers: Sequence[Dict[str, Any]], policy_path: Path) -> Optional[str]:
+    """Like quota_refusal, but a worker with accounts is refused only when every one of them is past the stop line."""
+    for worker in workers:
+        try:
+            rotation = worker_accounts(worker, policy_path)
+        except (OSError, PlanError):
+            rotation = []
+        if not rotation:
+            refusal = quota_refusal([worker], policy_path)
+        else:
+            refusals = [quota_refusal([{**worker, "account": name}], policy_path) for name in rotation]
+            refusal = None if any(item is None for item in refusals) else (
+                refusals[0] if len(refusals) == 1 else f"every {worker['provider']} account is past the stop line; {refusals[0]}")
+        if refusal is not None:
+            return refusal
+    return None
+
+
 def refuse_low_quota(workers: Sequence[Dict[str, Any]], policy_path: Path) -> None:
-    refusal = quota_refusal(workers, policy_path)
+    refusal = account_quota_refusal(workers, policy_path)
     if refusal is not None:
         raise PlanError(refusal)
 
 
 def detach_run(
-    plan_path: Path, run_dir: Optional[Path], policy_path: Path, strategy: Optional[str], allow_low_quota: bool = False
+    plan_path: Path, run_dir: Optional[Path], policy_path: Path, strategy: Optional[str], allow_low_quota: bool = False,
+    make_current: bool = True,
+    terminals: Optional[bool] = None,
 ) -> Dict[str, Any]:
     if os.environ.get(WORKER_ENV_FLAG):
         raise PlanError("this process is an orchestration worker, and workers cannot start orchestrations")
@@ -5001,6 +5767,9 @@ def detach_run(
         args += ["--strategy", strategy]
     if allow_low_quota:
         args.append("--allow-low-quota")
+    if not make_current:
+        args.append("--_no-current")
+    args.append("--terminals" if terminals_enabled(plan["policy"], terminals) else "--no-terminals")
     options: Dict[str, Any] = {"shell": False}
     if os.name == "nt":
         options["creationflags"] = (
@@ -5019,7 +5788,8 @@ def detach_run(
                 "id": worker["id"], "provider": worker["provider"], "status": "queued",
             } for worker in plan["workers"]},
         })
-        set_current(target.parent if (target.parent / ORCHESTRATION_FILE).is_file() else target)
+        if make_current:
+            set_current(target.parent if (target.parent / ORCHESTRATION_FILE).is_file() else target)
         process.stdin.write(b"1")
         process.stdin.close()
     except BaseException:
@@ -5027,6 +5797,63 @@ def detach_run(
         process.wait()
         raise
     return {"status": "started", "runDir": str(target), "pid": process.pid}
+
+
+def start_handoff(args: argparse.Namespace, policy_path: Path) -> Dict[str, Any]:
+    if os.environ.get(WORKER_ENV_FLAG):
+        raise PlanError("this process is an orchestration worker, and workers cannot start handoffs")
+    task = require_string(args.task, "handoff task")
+    token = uuid.uuid4().hex[:8]
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    folder = orchestrations_home() / f"{stamp}-handoff-{token}"
+    plan_path = folder / "task-plan.json"
+    branch = args.branch or f"coding-opus/handoff-{token}"
+    worker = {
+        "id": "handoff", "provider": args.provider, "mode": "write", "cwd": str(args.cwd.resolve()),
+        "task": task, "isolate": True, "branch": branch, "timeoutSeconds": args.timeout_seconds,
+        "seedPaths": args.seed_path,
+    }
+    if args.model:
+        worker["model"] = args.model
+    if args.effort:
+        worker["effort"] = args.effort
+    if args.command_path:
+        worker.update(command=args.command_path, args=args.arg, outputFormat="text")
+    elif args.arg:
+        raise PlanError("--arg requires --command")
+    raw = {"version": PLAN_VERSION, "title": task[:120], "strategy": "economy", "workers": [worker]}
+    plan = validate_plan(raw, plan_path, load_policy(policy_path), policy_path=policy_path)
+    resolved = plan["workers"][0]
+    if resolved["provider"] != args.provider:
+        raise PlanError(f"handoff requested {args.provider}, but policy selected {resolved['provider']}; choose explicitly")
+    if not args.allow_low_quota:
+        refuse_low_quota(plan["workers"], policy_path)
+    folder.mkdir(parents=True)
+    atomic_write_json(plan_path, raw)
+    atomic_write_json(folder / ORCHESTRATION_FILE, {
+        "version": STATE_VERSION, "title": task[:120], "kind": "handoff", "createdAt": now_iso(),
+        "branch": branch, "integration": False,
+    })
+    run_dir = folder / f"01-handoff-{token}"
+    launched = detach_run(plan_path, run_dir, policy_path, None, args.allow_low_quota, make_current=False)
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        state = read_optional_json(run_dir / "state.json") or {}
+        worker_state = state.get("workers", {}).get("handoff", {})
+        if worker_state.get("status") in ("failed", "skipped", "timed_out", "stopped"):
+            outcome = read_optional_json(run_dir / "workers" / "handoff" / "outcome.json") or {}
+            raise PlanError(f"handoff failed in {run_dir}: {outcome.get('error') or worker_state['status']}")
+        if worker_state.get("worktree"):
+            return {**launched, "kind": "handoff", "folder": str(folder), "provider": resolved["provider"],
+                    "branch": branch, "worktree": worker_state["worktree"], "integration": False,
+                    "result": str(run_dir / "workers" / "handoff" / "result.md"),
+                    "diff": str(run_dir / "workers" / "handoff" / "diff.patch")}
+        if state.get("status") not in (None, "running"):
+            outcome = read_optional_json(run_dir / "workers" / "handoff" / "outcome.json") or {}
+            raise PlanError(f"handoff failed to start in {run_dir}: {outcome.get('error') or state['status']}")
+        time.sleep(0.1)
+    stop_payload(run_dir)
+    raise PlanError(f"handoff startup timed out and stop was requested; inspect {run_dir}")
 
 
 def wait_payload(folder: Optional[Path], timeout: int) -> Dict[str, Any]:
@@ -5050,6 +5877,8 @@ def run_batch(
     strategy_override: Optional[str],
     background: bool = False,
     allow_low_quota: bool = False,
+    make_current: bool = True,
+    terminals: Optional[bool] = None,
 ) -> int:
     if os.environ.get(WORKER_ENV_FLAG):
         raise PlanError("this process is an orchestration worker, and workers cannot start orchestrations")
@@ -5086,7 +5915,8 @@ def run_batch(
         run_dir / "plan.json", plan_payload(plan, plan_path.resolve(), policy_path, dry_run=False)
     )
     try:
-        set_current(run_dir.parent if (run_dir.parent / ORCHESTRATION_FILE).is_file() else run_dir)
+        if make_current:
+            set_current(run_dir.parent if (run_dir.parent / ORCHESTRATION_FILE).is_file() else run_dir)
     except OSError:
         pass
     suffix = run_dir.name[-8:]
@@ -5129,6 +5959,11 @@ def run_batch(
     checkouts = CheckoutRegistry()
     tracker = BudgetTracker(plan["budget"], outer, plan["maxConcurrent"], len(plan["workers"]), state)
     state.update_budget(tracker.usage())
+    observers = WorkerTerminals(
+        terminals_enabled(plan["policy"], terminals),
+        orchestration_meta(orchestration).get("title") or plan["title"] or plan_path.stem,
+        run_dir,
+    )
     previous_signals = install_interruption_handlers()
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=plan["maxConcurrent"])
     futures: List[concurrent.futures.Future] = []
@@ -5145,6 +5980,7 @@ def run_batch(
                 registry,
                 tracker,
                 checkouts,
+                observers,
             )
             for worker in plan["workers"]
         ]
@@ -5228,6 +6064,7 @@ def plan_payload(
                 "modelNote": worker["modelNote"],
                 "mode": worker["mode"],
                 "isolate": worker["isolate"],
+                "branch": worker.get("branch"),
                 "seedPaths": worker["seedPaths"],
                 "timeoutSeconds": worker["timeoutSeconds"],
                 "effectiveTimeoutSeconds": effective_timeout,
@@ -5421,6 +6258,8 @@ def collect_run(run_dir: Path) -> Dict[str, Any]:
                 "provider": provider,
                 "label": intent.get("command") or provider,
                 "requestedProvider": intent.get("requestedProvider"),
+                "account": outcome.get("account") or intent.get("account"),
+                "accountAttempts": list(outcome.get("accountAttempts") or []),
                 "routingNote": intent.get("routingNote"),
                 "tier": intent.get("tier"),
                 "model": intent.get("model"),
@@ -5736,6 +6575,11 @@ def ran_on(worker: Dict[str, Any]) -> str:
     head = worker["label"] or provider
     if requested and requested not in ("auto", provider):
         head = f"{requested} -> {head}"
+    if worker.get("account") and worker["account"] != DEFAULT_ACCOUNT:
+        head = f"{head} ({worker['account']})"
+    moved = [attempt["account"] for attempt in worker.get("accountAttempts") or []]
+    if moved:
+        head = f"{' -> '.join(moved)} -> {head}"
     parts = [head]
     if worker["model"]:
         parts.append(worker["model"])
@@ -6091,7 +6935,9 @@ def probe_provider(provider: str) -> Dict[str, Any]:
 AUTH_COMMANDS = {"claude": ("auth", "status"), "codex": ("login", "status"), "kimi": ("provider", "list")}
 
 
-def provider_logged_in(provider: str, launch: Optional[List[str]]) -> Optional[bool]:
+def provider_logged_in(
+    provider: str, launch: Optional[List[str]], env: Optional[Dict[str, str]] = None,
+) -> Optional[bool]:
     command = AUTH_COMMANDS.get(provider)
     if not launch or not command:
         return None
@@ -6101,6 +6947,7 @@ def provider_logged_in(provider: str, launch: Optional[List[str]]) -> Optional[b
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            env=env,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -6155,12 +7002,18 @@ def doctor_payload(policy_path: Path) -> Dict[str, Any]:
     elif policy and not policy["budget"]:
         hints.append("no default budget; policy set can add hard limits such as --max-calls")
     usage = usage_payload(policy_path, refresh=False)
+    try:
+        accounts = {provider: account_rotation(policy_path, provider) for provider in ACCOUNT_PROVIDERS}
+    except PlanError as account_error:
+        accounts = {}
+        hints.append(f"saved accounts are invalid: {account_error}")
     return {
         "usage": usage,
+        "accounts": accounts,
         "usageSummary": usage_summary(usage),
         "mode": mode_payload("show", Path.cwd(), None, None, [], False),
         "skill": {"version": skill_version(), "path": str(Path(__file__).resolve().parent.parent)},
-        "python": {"version": sys.version.split()[0], "ok": python_ok},
+        "python": {"version": sys.version.split()[0], "ok": python_ok, "executable": str(Path(sys.executable).resolve())},
         "policyPath": str(policy_path),
         "policy": {
             "exists": exists,
@@ -6219,6 +7072,36 @@ def strategies_payload() -> List[Dict[str, Any]]:
     ]
 
 
+def account_command(args: argparse.Namespace, policy_path: Path) -> int:
+    action, provider, names = args.account_action, args.provider, list(args.names)
+    if action == "list":
+        print(json.dumps(accounts_payload(policy_path, check_login=not args.no_login_check), indent=2, ensure_ascii=False))
+        return 0
+    if not provider:
+        raise PlanError(f"account {action} needs a provider: {' or '.join(ACCOUNT_PROVIDERS)}")
+    if action == "order":
+        print(json.dumps({"provider": provider, "order": order_accounts(policy_path, provider, names)}, indent=2))
+        return 0
+    if action == "add" and linked_account_files(policy_path) and not args.local:
+        if names:
+            print("note: Coding Agent 2 names its accounts by email; the name you gave is not used", file=sys.stderr)
+        return add_account_in_coding_agent(provider)
+    if len(names) != 1:
+        raise PlanError(f"account {action} takes one account name")
+    name = names[0]
+    if action == "add":
+        payload = add_account(policy_path, provider, name)
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        if args.no_login:
+            print(f"log in later with: orchestrate.py account login {provider} {name}", file=sys.stderr)
+            return 0
+        return run_account_login(policy_path, provider, name)
+    if action == "login":
+        return run_account_login(policy_path, provider, name)
+    print(json.dumps(remove_account(policy_path, provider, name, args.delete_home), indent=2, ensure_ascii=False))
+    return 0
+
+
 def update_policy(args: argparse.Namespace, policy_path: Path) -> Dict[str, Any]:
     policy = load_policy(policy_path)
     if args.policy_action == "reset":
@@ -6245,6 +7128,8 @@ def update_policy(args: argparse.Namespace, policy_path: Path) -> Dict[str, Any]
         policy["maxWorkers"] = args.max_workers
     if args.max_concurrent is not None:
         policy["maxConcurrent"] = args.max_concurrent
+    if args.terminals is not None:
+        policy["terminals"] = args.terminals == "on"
     budget = dict(policy.get("budget", {}))
     for key, value in (
         ("maxCalls", args.max_calls),
@@ -6286,7 +7171,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--version", action="version", version=f"coding-opus {skill_version() or 'unknown'}"
     )
+    parser.add_argument("--session-id", help="pin this session to one runner copy and Python executable")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    guide_parser = subparsers.add_parser("guide", help="load one reference shipped beside this runner")
+    guide_parser.add_argument("phase", nargs="?", choices=list(GUIDE_PHASES))
+    follow_parser = subparsers.add_parser("follow", help="observe one worker's logs without controlling its execution")
+    follow_parser.add_argument("folder", type=Path)
+    follow_parser.add_argument("worker_id")
+    follow_parser.add_argument("--title")
+    follow_parser.add_argument("--_terminal", choices=["wt", "console", "osascript", "x-terminal-emulator", "gnome-terminal", "konsole", "xterm"], help=argparse.SUPPRESS)
+    follow_parser.add_argument("--_executable", help=argparse.SUPPRESS)
     subparsers.add_parser("strategies", help="list orchestration strategies and limits")
     playbook_parser = subparsers.add_parser(
         "playbook", help="print the strategy playbooks the planner follows"
@@ -6307,6 +7201,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     probe_parser.add_argument("providers", nargs="*", choices=["codex", "claude", "agy", "kimi"])
     doctor_parser = subparsers.add_parser("doctor", help="check the environment and saved policy")
     doctor_parser.add_argument("--policy", type=Path)
+    account_parser = subparsers.add_parser(
+        "account", help="manage extra Codex or Claude accounts that workers move to when one hits its usage limit"
+    )
+    account_parser.add_argument("account_action", choices=["list", "add", "login", "remove", "order"])
+    account_parser.add_argument("provider", nargs="?", choices=list(ACCOUNT_PROVIDERS))
+    account_parser.add_argument("names", nargs="*", help="account name; for order, every account in the order to try")
+    account_parser.add_argument("--policy", type=Path)
+    account_parser.add_argument("--no-login", action="store_true", help="with add, register the account without logging in")
+    account_parser.add_argument("--local", action="store_true",
+                                help="with add, keep the account only in Coding Opus even when Coding Agent 2 manages accounts")
+    account_parser.add_argument("--delete-home", action="store_true", help="with remove, also delete the account's folder and login")
+    account_parser.add_argument("--no-login-check", action="store_true", help="with list, skip asking each CLI whether it is logged in")
     for command in ("usage", "models"):
         information_parser = subparsers.add_parser(command, help=f"show provider {command} as JSON")
         information_parser.add_argument("--policy", type=Path)
@@ -6342,6 +7248,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     run_parser.add_argument("--run-dir", type=Path)
     run_parser.add_argument("--detach", action="store_true", help="start the run in the background")
     run_parser.add_argument("--_background", action="store_true", help=argparse.SUPPRESS)
+    run_parser.add_argument("--_no-current", action="store_true", help=argparse.SUPPRESS)
+    terminal_flags = run_parser.add_mutually_exclusive_group()
+    terminal_flags.add_argument("--terminals", dest="terminals", action="store_true", default=None,
+                                help="open a read-only log terminal for each worker")
+    terminal_flags.add_argument("--no-terminals", dest="terminals", action="store_false",
+                                help="disable worker terminals even when enabled in the policy")
     run_parser.add_argument(
         "--in", dest="into", metavar="FOLDER", help="add the run as the next wave of an orchestration folder, or 'current'"
     )
@@ -6350,6 +7262,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     run_parser.add_argument(
         "--allow-low-quota", action="store_true", help="start workers past quota.stopAt; only after the user agrees"
     )
+    handoff_parser = subparsers.add_parser("handoff", help="start one worker on its own branch without waiting for integration")
+    handoff_parser.add_argument("task")
+    handoff_parser.add_argument("--provider", choices=list(BUILTIN_PROVIDERS) + ["custom"], default="codex")
+    handoff_parser.add_argument("--cwd", type=Path, default=Path("."))
+    handoff_parser.add_argument("--branch")
+    handoff_parser.add_argument("--model")
+    handoff_parser.add_argument("--effort")
+    handoff_parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
+    handoff_parser.add_argument("--seed-path", action="append", default=[])
+    handoff_parser.add_argument("--command", dest="command_path", help="executable for provider custom")
+    handoff_parser.add_argument("--arg", action="append", default=[], help="argument for provider custom")
+    handoff_parser.add_argument("--policy", type=Path)
+    handoff_parser.add_argument("--allow-low-quota", action="store_true")
     report_parser = subparsers.add_parser(
         "report", help="explain what runs did, why, and what they reported spending"
     )
@@ -6436,6 +7361,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     policy_parser.add_argument("--max-workers", type=int)
     policy_parser.add_argument("--max-concurrent", type=int)
+    policy_parser.add_argument("--terminals", choices=["on", "off"], help="save the default for read-only worker log terminals")
     policy_parser.add_argument("--max-calls", type=int)
     policy_parser.add_argument("--max-wall-seconds", type=int)
     policy_parser.add_argument("--max-estimated-prompt-tokens", type=int)
@@ -6446,7 +7372,35 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     policy_parser.add_argument("--strong-model", nargs="*", metavar="PROVIDER=MODEL")
     args = parser.parse_args(argv)
 
+    previous_session = os.environ.get("CODING_OPUS_SESSION")
     try:
+        if args.command == "follow":
+            if args._terminal:
+                if os.environ.get("CODING_OPUS_TERMINALS") == "0":
+                    return 0
+                try:
+                    if not args._executable:
+                        raise PlanError("terminal launcher executable is missing")
+                    launch_terminal((args._terminal, args._executable), args.title or args.worker_id,
+                                    follower_command(args.folder, args.worker_id, args.title or args.worker_id), Path.cwd())
+                except Exception as error:
+                    print(f"warning: worker terminal for {args.worker_id} could not open: {error}", file=sys.stderr, flush=True)
+                return 0
+            return follow_worker(args.folder, args.worker_id, args.title)
+        session = args.session_id or os.environ.get("CODING_OPUS_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+        if not session and args.command == "doctor":
+            session = uuid.uuid4().hex
+        runtime = None
+        if session:
+            os.environ["CODING_OPUS_SESSION"] = session
+            runtime = session_runtime(session)
+        if args.command == "guide":
+            print(guide_output(args.phase), end="")
+            return 0
+        if args.command == "handoff":
+            policy_path = (args.policy or default_policy_path()).expanduser().resolve()
+            print(json.dumps(start_handoff(args, policy_path), indent=2, ensure_ascii=False))
+            return 0
         if args.command == "strategies":
             print(json.dumps(strategies_payload(), indent=2))
             return 0
@@ -6481,9 +7435,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             payload = usage_payload(policy_path) if args.command == "usage" else models_payload(policy_path)
             print(json.dumps(payload, indent=2, ensure_ascii=False))
             return 0
+        if args.command == "account":
+            policy_path = (args.policy or default_policy_path()).expanduser().resolve()
+            return account_command(args, policy_path)
         if args.command == "doctor":
             policy_path = (args.policy or default_policy_path()).expanduser().resolve()
-            print(json.dumps(doctor_payload(policy_path), indent=2, ensure_ascii=False))
+            print(json.dumps({**doctor_payload(policy_path), "runtime": runtime}, indent=2, ensure_ascii=False))
             return 0
         if args.command == "report":
             runs, folder = report_target(args.runs)
@@ -6650,14 +7607,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             folder = resolve_folder(None if args.into == "current" else Path(args.into))
             run_dir = next_wave_dir(folder, raw.get("phase") if isinstance(raw, dict) else None)
         if args.detach:
-            print(json.dumps(detach_run(args.plan, run_dir, policy_path, args.strategy, args.allow_low_quota)))
+            print(json.dumps(detach_run(args.plan, run_dir, policy_path, args.strategy, args.allow_low_quota,
+                                        terminals=args.terminals)))
             return 0
         if args._background and sys.stdin.buffer.read(1) != b"1":
             raise PlanError("detached launcher exited before preparing the run")
-        return run_batch(args.plan, run_dir, policy_path, args.strategy, args._background, args.allow_low_quota)
+        return run_batch(args.plan, run_dir, policy_path, args.strategy, args._background, args.allow_low_quota,
+                         make_current=not args._no_current, terminals=args.terminals)
     except PlanError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
+    finally:
+        if previous_session is None:
+            os.environ.pop("CODING_OPUS_SESSION", None)
+        else:
+            os.environ["CODING_OPUS_SESSION"] = previous_session
 
 
 if __name__ == "__main__":

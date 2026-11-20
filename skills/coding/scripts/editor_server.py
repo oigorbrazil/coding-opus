@@ -20,6 +20,11 @@ from typing import Any, Dict, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import orchestrate  # noqa: E402  (same folder; imported for its playbook rules)
+from usage_refresh import UsageRefresh
+from playbook_generation import PlaybookGenerator
+from account_management import AccountManager
+from workspace_api import WorkspaceApi
+from knowledge_library import KnowledgeLibrary
 
 PAGE = Path(__file__).resolve().parent.parent / "assets" / "editor.html"
 MAX_BODY = 1 << 20
@@ -35,11 +40,21 @@ class EditorState:
         self.last_ping = 0.0
         self.started = time.monotonic()
         self.lock = threading.Lock()
+        self.usage_refresh = UsageRefresh(policy_path)
+        self.generator = PlaybookGenerator(policy_path, usage=self.usage_refresh)
+        self.account_manager = AccountManager(policy_path)
+        self.workspace = WorkspaceApi(policy_path)
+        self.library = KnowledgeLibrary()
 
     def playbooks(self) -> Dict[str, Any]:
         user = orchestrate.user_playbooks_path(self.policy_path)
         effective = orchestrate.effective_playbooks_path(self.policy_path)
+        try:
+            backup = user.with_name(user.name + ".bak").read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            backup = None
         return {
+            "backupText": backup,
             "text": orchestrate.read_playbooks(effective),
             "path": str(user),
             "custom": user.is_file(),
@@ -51,6 +66,36 @@ class EditorState:
             return int(path.stat().st_mtime * 1000)
         except OSError:
             return 0
+
+    def accounts(self) -> Dict[str, Any]:
+        try:
+            return self.account_manager.snapshot()
+        except orchestrate.PlanError as error:
+            return {"ok": False, "error": str(error)}
+
+    def models(self) -> Dict[str, Any]:
+        try:
+            return {"ok": True, "catalog": orchestrate.model_catalog(self.policy_path)}
+        except (OSError, orchestrate.PlanError) as error:
+            return {"ok": False, "error": str(error)}
+
+    def usage(self) -> Dict[str, Any]:
+        try:
+            _, settings = orchestrate.loaded_playbooks(self.policy_path)
+            providers = settings.get("providers", ["claude", "codex"])
+            return {"ok": True, "value": self.usage_refresh.refresh(providers)}
+        except (OSError, orchestrate.PlanError) as error:
+            return {"ok": False, "error": str(error)}
+
+    def order_accounts(self, provider: Any, names: Any) -> Dict[str, Any]:
+        if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+            return {"ok": False, "error": "names must be a list of account names"}
+        try:
+            with self.lock:
+                orchestrate.order_accounts(self.policy_path, provider, names)
+        except orchestrate.PlanError as error:
+            return {"ok": False, "error": str(error)}
+        return self.accounts()
 
     def save(self, text: str) -> Dict[str, Any]:
         if not text.strip() or len(text.encode("utf-8")) > MAX_BODY:
@@ -113,6 +158,12 @@ def make_handler(state: EditorState, port: int):
             try:
                 if path == "/api/playbooks":
                     self._json(200, state.playbooks())
+                elif path == "/api/models":
+                    self._json(200, state.models())
+                elif path == "/api/accounts":
+                    self._json(200, state.accounts())
+                elif path == "/api/usage":
+                    self._json(200, state.usage())
                 elif path == "/api/stamp":
                     self._json(200, {"stamp": state.stamp()})
                 elif path == "/api/ping":
@@ -126,18 +177,41 @@ def make_handler(state: EditorState, port: int):
         def do_POST(self) -> None:  # noqa: N802
             if not self._guard(api=True):
                 return
-            if self.path.split("?", 1)[0] != "/api/playbooks":
+            path = self.path.split("?", 1)[0]
+            if path not in ("/api/playbooks", "/api/accounts/order", "/api/playbooks/generate",
+                            "/api/accounts/manage", "/api/workspace", "/api/library"):
                 self._json(404, {"error": "not found"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                self._json(400, {"ok": False, "error": "body size"})
+                return
             if length <= 0 or length > MAX_BODY * 2:
                 self._json(413, {"ok": False, "error": "body size"})
                 return
             try:
                 body = json.loads(self.rfile.read(length).decode("utf-8"))
-                text = body.get("text") if isinstance(body, dict) else None
             except ValueError:
-                text = None
+                body = None
+            body = body if isinstance(body, dict) else {}
+            if path in ("/api/workspace", "/api/library"):
+                if self.headers.get_content_type() != "application/json":
+                    self._json(415, {"ok": False, "error": "application/json required"})
+                    return
+                target = state.library if path == "/api/library" else state.workspace
+                self._json(200, target.action(body))
+                return
+            if path == '/api/accounts/manage':
+                self._json(200, state.account_manager.action(body))
+                return
+            if path == "/api/playbooks/generate":
+                self._json(200, state.generator.generate(body))
+                return
+            if path == "/api/accounts/order":
+                self._json(200, state.order_accounts(body.get("provider"), body.get("names")))
+                return
+            text = body.get("text")
             if not isinstance(text, str):
                 self._json(400, {"ok": False, "error": "text required"})
                 return
@@ -156,12 +230,16 @@ def serve(policy_path: Path, port: int, token: str) -> None:
             now = time.monotonic()
             idle = now - state.last_ping if state.last_ping else now - state.started
             limit = IDLE_AFTER_PING if state.last_ping else IDLE_BEFORE_FIRST_PING
-            if idle > limit:
+            if idle > limit and not state.generator.lock.locked() and not any(
+                    job['state'] == 'pending' for job in state.account_manager.jobs.values()):
                 server.shutdown()
                 return
 
     threading.Thread(target=watchdog, daemon=True).start()
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        state.account_manager.close()
 
 
 def launch(policy_path: Path, open_browser: bool) -> Dict[str, Any]:
@@ -195,7 +273,11 @@ def launch(policy_path: Path, open_browser: bool) -> Dict[str, Any]:
                 raise SystemExit("the editor server did not start")
             time.sleep(0.2)
     url = f"http://127.0.0.1:{port}/#token={token}"
-    return {"url": url, "pid": process.pid, "opened": bool(open_browser and webbrowser.open(url))}
+    opened = False
+    if open_browser:
+        from desktop_editor import open_editor
+        opened = open_editor(url, policy_path) or webbrowser.open(url)
+    return {"url": url, "pid": process.pid, "opened": bool(opened)}
 
 
 def main() -> int:

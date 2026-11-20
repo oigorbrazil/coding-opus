@@ -94,6 +94,20 @@ per-wave samples behind `dry-run`'s `quotaForecast`. Each provider/window has `u
 missing or stale readings as unknown and tell the user when they are stale; see
 [playbooks.md](playbooks.md) for routing rules and the forecast.
 
+Extra Codex or Claude accounts live in `coding-opus-accounts.json` next to the policy, each with
+its own CLI home under `accounts/<provider>/<name>/` (passed to workers as `CODEX_HOME` or
+`CLAUDE_CONFIG_DIR`). `account add` copies the default home's `config.toml` or `settings.json`, never
+its credentials, and starts the CLI's own login; `account list` shows each account's login and
+quota, and `usage` reports their readings under `accounts` keyed `provider@name`. The default
+account is the CLI's own environment and is named `default` in orders and plans.
+
+Coding Agent 2 owns accounts when it is installed: it publishes its host Codex and Claude accounts
+(id, email, home folder; never credentials) to `coding-agent-accounts.<instance>.json` next to the
+policy, and the runner adds them to the rotation, named after the email, default first, then Coding
+Agent 2's accounts, then local ones. A file whose home equals the default home is skipped. `account
+add` runs `coding account add --agent <provider>` when such a file exists (pass `--local` to keep an
+account only in Coding Opus); `account remove` and `account login` refuse Coding Agent 2 accounts.
+
 `run` and `run --detach` exit with an error naming the provider, window, percent and reset time
 when a worker's provider is blocked, and a running wave skips its queued workers on a provider
 that crosses the line, with `failureKind: quota_low`. Ask the user, as the skill's "Watch the
@@ -139,6 +153,46 @@ marks the current one with `*`.
 `--run-dir <empty-directory>` still works when a fixed location is useful; give each wave its own
 folder inside one parent, such as `<folder>/01-explore` and `<folder>/02-build`. Without either
 flag the runner creates a unique directory under the operating system's temporary directory.
+
+## Worker log terminals
+
+`run <plan.json> --terminals` opens one terminal window or tab just after each worker process
+starts. It only follows that worker's existing `stdout.log` and `stderr.log`; execution, stdin,
+budgets, worktrees, result capture and `CODING_OPUS_WORKER` remain owned by the headless runner.
+Closing an observer does not stop its worker. Workers skipped before starting get no terminal.
+
+This is on by default (since version 34); a policy without the key counts as on.
+`policy set --terminals on|off` saves `terminals: true|false` in the policy; `policy show` reports it. `run --no-terminals` overrides a saved `true`, while
+`CODING_OPUS_TERMINALS=0` disables observers regardless of the policy or flag. The detached
+launcher passes the effective option to its background runner; `wait` works as usual.
+
+The title is `<orchestration title> · <worker id> · <provider>:<model>`; a missing model shows
+`default`. Control characters become spaces and Windows Terminal's semicolon separator is rendered
+as `；`. The runner selects one launcher per wave and never tries a second one after a launch
+failure: Windows Terminal (`wt.exe`), otherwise a new Windows console; macOS Terminal via
+`osascript`; or the first installed Linux launcher among `x-terminal-emulator`, `gnome-terminal`,
+`konsole` and `xterm`. SSH sessions and Linux without `DISPLAY` or `WAYLAND_DISPLAY` skip
+observers with one warning. Workers still run normally.
+
+A separate, detached helper opens each terminal, so an unresponsive desktop launcher cannot
+hold up the worker or the wave. Launch failures are warnings in `runner.stderr.log`; failure to
+start that helper is also printed on the runner's stderr. Missing desktop/launcher warnings are
+printed once on stderr (the same log for a detached wave).
+
+To follow an existing worker yourself:
+
+```text
+python scripts/orchestrate.py follow <run-directory> <worker-id>
+```
+
+An orchestration folder is also accepted when exactly one wave contains that worker. The
+follower reads files only, finishes tailing after the worker settles, prints its `STATUS:` and
+`SUMMARY:` lines from `result.md` (or reports unavailable data), and shows the interactive resume
+command when the provider supplied a `sessionId`. It prints the worker's working directory so
+you can resume there; it never resumes automatically. It waits for Enter before closing; EOF or
+Ctrl+C closes only the observer. Custom adapters have no verified interactive resume syntax, so
+their session ID is shown without inventing a command. The follower does not update session
+runtime records or worker files.
 
 ## Staying on
 
@@ -413,7 +467,11 @@ as failure. Read `error` and `failureKind`, then the tail of `stderr.log`. Retry
 narrower task or corrected invocation addresses a specific cause:
 
 - `rate_limited`: that provider is low for the rest of the orchestration. Ask the user whether to
-  wait for the reset in `resetHint` or run the unit on another provider.
+  wait for the reset in `resetHint` or run the unit on another provider. With extra accounts the
+  runner already retried the worker on each account with room (`accountAttempts`), so this means
+  every account is out.
+- `account_missing`: the account the worker was to use is no longer registered; re-add it or drop
+  `account` from the plan.
 - `quota_low`: the provider reached `quota.stopAt` before the worker started; ask the same way.
 - `auth_required` and `not_installed`: tell the user; another attempt will fail the same way.
 - `timed_out` and `stalled`: resume the session with runner strategy `rescue`, or narrow the task.

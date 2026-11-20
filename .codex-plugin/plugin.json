@@ -1,6 +1,6 @@
 {
   "name": "coding",
-  "version": "32.0.0",
+  "version": "36.0.0",
   "description": "Coding Opus: a global second brain consulted before answering and planning, plus smart orchestration that hands bounded units to the cheapest capable Codex, Claude Code, Antigravity, Kimi or custom CLI worker.",
   "author": {
     "name": "oigorbrazil",

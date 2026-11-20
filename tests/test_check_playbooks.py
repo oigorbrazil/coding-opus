@@ -5,6 +5,7 @@ import os
 
 # Tests read the generic playbooks, not the personal default the skill ships.
 os.environ.setdefault("CODING_OPUS_BUNDLED_PLAYBOOKS", str(Path(__file__).resolve().parent / "fixtures" / "playbooks.yaml"))
+os.environ.setdefault("CODING_OPUS_TERMINALS", "0")
 
 try:
     import yaml

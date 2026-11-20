@@ -51,7 +51,7 @@ python scripts/orchestrate.py policy reset
 ```
 
 Set `CODING_OPUS_POLICY` or pass `--policy <file>` to use a specific policy. The default is
-under `%APPDATA%\CodingOpus\` on Windows and the user's XDG config directory on Unix-like systems.
+under `%USERPROFILE%\.coding-opus\` on Windows and the user's XDG config directory on Unix-like systems.
 
 `backend` is a routing preference for the skill: `skill` always uses the local runner, `mcp` uses
 the Coding Opus tools when they exist, and `auto` prefers MCP but falls back locally. An explicit user

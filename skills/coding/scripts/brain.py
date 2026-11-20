@@ -28,7 +28,7 @@ from typing import Dict, List, Optional
 
 BRAIN_NAME = "second brain"
 BEGIN, END = "<!-- coding-opus:inicio -->", "<!-- coding-opus:fim -->"
-SKIP_DIRS = {".obsidian", ".git", ".trash", "node_modules", ".venv", "__pycache__", "99-Templates"}
+SKIP_DIRS = {".obsidian", ".git", ".trash", "node_modules", ".venv", "__pycache__", "99-Templates", "memory"}
 SKIP_FILES = {"CLAUDE.md", "AGENTS.md"}
 META_FIELDS = ("title", "aliases", "tags", "area", "type", "status")
 DEFAULT_FOLDERS = [
@@ -302,6 +302,13 @@ def install(args: argparse.Namespace) -> int:
             block = rules_block(brain.as_posix(), folders, extra, generated)
             rules[str(target)] = write_block(target, block, dry)
     report["globalRules"] = rules
+    if not dry and not getattr(args, "no_desktop", False):
+        from desktop_editor import DesktopError, ensure_installed
+        try:
+            if ensure_installed(open_on_first_install=True):
+                report["desktopInstalled"] = True
+        except DesktopError as error:
+            report["desktopError"] = str(error)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
@@ -414,7 +421,7 @@ def orchestration_report(folder: Optional[str]) -> str:
     return done.stdout.strip()
 
 
-def record(args: argparse.Namespace) -> int:
+def record_note(args: argparse.Namespace):
     brain = existing_brain(args)
     target = (brain / args.folder).resolve()
     if not inside(target, brain):
@@ -438,16 +445,23 @@ def record(args: argparse.Namespace) -> int:
     lines += ["## Notas relacionadas", "", *[f"- [[{n}]]" for n in args.related], ""]
     content = "\n".join(lines)
     path = target / f"{slugify(args.title)}.md"
-    if not args.write:
-        print(f"[prévia] {path.relative_to(brain).as_posix()}  (use --write para gravar)\n\n{content}")
-        return 0
-    target.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(path, "x", encoding="utf-8", newline="\n") as handle:
-            handle.write(content)
-    except FileExistsError:
-        raise BrainError(f"já existe: {path}; escolha outro título ou edite a nota existente")
-    print(f"Gravado: {path.relative_to(brain).as_posix()}")
+    if args.write:
+        target.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(path, "x", encoding="utf-8", newline="\n") as handle:
+                handle.write(content)
+        except FileExistsError:
+            raise BrainError(f"já existe: {path}; escolha outro título ou edite a nota existente")
+    return path, content
+
+
+def record(args: argparse.Namespace) -> int:
+    path, content = record_note(args)
+    relative = path.relative_to(existing_brain(args)).as_posix()
+    if args.write:
+        print(f"Gravado: {relative}")
+    else:
+        print(f"[prévia] {relative}  (use --write para gravar)\n\n{content}")
     return 0
 
 
@@ -469,6 +483,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sub.add_parser("install", parents=[common], help="cria o second brain (se faltar) e as regras globais")
     p.add_argument("--areas", nargs="+", help="nomes das pastas 10, 20 e 30 numa pasta nova")
     p.add_argument("--no-rules", action="store_true", help="não escreve as regras em ~/.claude e ~/.codex")
+    p.add_argument("--no-desktop", action="store_true", help="pula a instalação do aplicativo no Windows")
     p.add_argument("--dry-run", action="store_true")
 
     p = sub.add_parser("find", parents=[common], help="busca notas pelo frontmatter")

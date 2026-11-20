@@ -17,6 +17,7 @@ from unittest import mock
 
 # Tests read the generic playbooks, not the personal default the skill ships.
 os.environ.setdefault("CODING_OPUS_BUNDLED_PLAYBOOKS", str(Path(__file__).resolve().parent / "fixtures" / "playbooks.yaml"))
+os.environ.setdefault("CODING_OPUS_TERMINALS", "0")
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILL = ROOT / "skills" / "coding"
@@ -633,9 +634,8 @@ class GuardTest(Fixtures):
             entry = hooks["hooks"][event][0]["hooks"][0]
             self.assertEqual(entry["timeout"], timeout)
             self.assertIn("${CLAUDE_PLUGIN_ROOT}/skills/coding/scripts/hook.py\"", entry["command"])
-            self.assertTrue(entry["command"].startswith("python3 -S "))
-            self.assertIn(" || python -S ", entry["command"])
-            self.assertTrue(entry["command"].endswith(" || true"))
+            self.assertIn('"${CODING_OPUS_PYTHON}" -S ', entry["command"])
+            self.assertNotIn(" || ", entry["command"])
         self.assertEqual(sorted(p.name for p in (ROOT / "skills").iterdir()), ["coding"])
         self.assertIn("## Comandos curtos", (SKILL / "SKILL.md").read_text(encoding="utf-8"))
 

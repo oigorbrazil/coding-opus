@@ -90,6 +90,11 @@ out or went quiet still leaves its session id for runner strategy `rescue`.
 Resume only a closely related follow-up. If no session ID was emitted, create a new worker with a
 compact handoff instead.
 
+For interactive takeover after the worker finishes, run from its recorded working directory:
+`codex resume <sessionId>`, `claude --resume <sessionId>`, `agy --conversation <sessionId>`, or
+`kimi --session <sessionId>`. These omit the headless print/output flags. `orchestrate.py follow`
+prints the corresponding command; the observer never executes it or forwards input to a worker.
+
 ## Custom CLIs
 
 Use `provider: "custom"` with:
@@ -117,4 +122,4 @@ flag/value pairs, `--flag=value`, config overrides and substituted arguments.
 Plain CLI workers do not appear on Coding Opus's orchestration board. The runner cannot provide live
 mid-turn steering or approval dialogs. Claude and Codex quota readings are available through
 `usage` without MCP; other readings still need Coding Opus or the user as [playbooks.md](playbooks.md)
-describes. Use the Alethe app's `alethe_*` MCP tools when board or steering capabilities matter.
+describes. Use a connected orchestration app's MCP board tools when board or steering capabilities matter.

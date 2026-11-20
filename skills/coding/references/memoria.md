@@ -40,6 +40,14 @@ diretório temporário como local do second brain.
 6. Mostre o caminho, se a pasta foi criada ou reaproveitada, as pastas e os arquivos de regras
    tocados (a saída JSON do `install` traz tudo). Use `--dry-run` para prévia.
 
+No Windows, `brain.py install` instala o aplicativo de Playbooks para o usuário e cria o atalho
+Coding Opus no menu Iniciar, sem pedir confirmação. O aplicativo abre ao concluir a primeira
+instalação. Rode esse comando mesmo com o second brain já criado quando a tarefa for configurar
+a skill e o aplicativo. A primeira abertura do editor também instala o aplicativo se ele estiver
+ausente. Se a instalação falhar, mostre o erro do setup quando disponível. Ao abrir o editor,
+o navegador serve de alternativa.
+Use `--no-desktop` para pular a instalação do app durante a configuração da memória.
+
 Numa pasta **nova**, pergunte **"Quais são as três áreas da sua vida com mais anotações, na ordem
 das pastas 10, 20 e 30?"**. Se a resposta vier antes da criação, use `install --areas A B C`. Se
 vier depois, renomeie as pastas 10, 20 e 30 mantendo o prefixo, só se estiverem vazias ou com o ok
@@ -52,6 +60,10 @@ Projetos configurados pelo Obsidian Second Brain antigo têm um bloco `obsidian:
 usuário quiser, ofereça mover as notas de lá para o second brain global.
 
 ## Consulta automática
+
+No editor da Opus, abra **Second Brain** para navegar pelas seções, buscar títulos, tags ou
+aliases, ler uma nota ou registrar uma nova. Abra **Memória** para consultar as conversas
+capturadas, agrupadas por projeto.
 
 Siga o bloco `coding-opus:inicio` das instruções globais antes de cada novo pedido substantivo,
 em qualquer projeto. Reutilize notas recentes em continuações e respeite pedidos para pular a
@@ -78,3 +90,9 @@ confirme a gravação. Nota nova sem destino explícito vai para `00-Inbox` com 
 Frontmatter: `id` (YYYYMMDD-HHMM), `title`, `area`, `type` (nota, meeting, decisao, estudo, ideia
 ou daily), `tags`, `status` (inbox, ativo ou arquivado), `created`, `updated`. Preserve o `id`.
 Não publique notas.
+
+## Memória de conversas
+
+`memory on` habilita a função de [chat-memory.md](chat-memory.md). Essa autorização permite
+capturar pedidos/respostas e checkpoints em `<second brain>/memory`. As regras das notas
+continuam valendo fora dessa pasta. Consulte conversas com `chat_memory.py find/read`.

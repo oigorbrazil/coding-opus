@@ -1,12 +1,14 @@
 # Pilar 2 — Orquestração inteligente
 
-Recriado a partir da Alethe Orchestrate v24 (MIT, Kauã Miguel), com o nome Coding Opus. Termine o
-trabalho com o menor contexto possível no lead e os workers mais baratos que dão conta, ou com a
+Termine o trabalho com o menor contexto possível no lead e os workers mais baratos que dão conta, ou com a
 combinação mais forte quando o usuário pedir. Planeje, delegue unidades limitadas e integre
 resultados sustentados por evidência.
 
 Caminhos como `scripts/...` e `references/...` são relativos à raiz da skill. Os comandos abaixo
 são subcomandos de `scripts/orchestrate.py` (no Windows, `py scripts/orchestrate.py <comando>`).
+Os exemplos usam nomes curtos: na execução, substitua pelo Python e pelo runner absolutos de
+`doctor.runtime.command`, incluindo `--session-id`. Não troque esse prefixo após uma falha.
+Carregue esta referência com `guide orquestracao`; outras fases saem de `guide <fase>` da mesma cópia.
 
 - **Playbook** = as fases e os papéis.
 - **Perfil** = quais modelos cada tier usa (`base`, `savings`, `aggressive`).
@@ -19,28 +21,36 @@ são subcomandos de `scripts/orchestrate.py` (no Windows, `py scripts/orchestrat
 
 | Item | Onde |
 | --- | --- |
-| política, playbooks, preços, cota | `%APPDATA%\CodingOpus\coding-opus-*.json/yaml` (Windows) ou `~/.config/coding-opus/` |
+| política, playbooks, preços, cota | `%USERPROFILE%\.coding-opus\coding-opus-*.json/yaml` (Windows) ou `~/.config/coding-opus/` |
 | orquestrações | `orchestrations/` dentro dessa pasta |
 | worktrees dos workers | `.coding-opus/worktrees/` no repositório |
 | variáveis | `CODING_OPUS_POLICY`, `CODING_OPUS_PLAYBOOKS`, `CODING_OPUS_HOME`, `CODING_OPUS_PASSIVE`, `CODING_OPUS_WORKER`, `CODING_OPUS_SESSION` |
 
-Na primeira execução, se a pasta nova não existe e há uma pasta da Alethe (`%APPDATA%\Alethe` ou
-`~/.config/alethe`), o runner **copia** o estado para a pasta nova e renomeia `alethe-*` para
-`coding-opus-*`. A pasta antiga fica intacta. O arquivo `MIGRATED_FROM.txt` registra a origem.
+No Windows, o estado fica fora do `%APPDATA%`. O app Claude para Windows é um pacote MSIX, e o Windows
+desvia para uma cópia privada dele o que as sessões gravam no AppData; os outros apps e terminais não
+veem essa cópia.
+
+Na primeira execução, se a pasta nova não existe, o runner **copia** o estado de uma pasta anterior:
+- `%APPDATA%\CodingOpus`;
+- senão, a da Alethe (`%APPDATA%\Alethe` ou `~/.config/alethe`), renomeando `alethe-*` para
+  `coding-opus-*`.
+
+A pasta antiga fica intacta. O arquivo `MIGRATED_FROM.txt` registra a origem.
 
 ## Escolher o backend
 
 Respeite um pedido explícito pela skill local ou sem MCP: ele sempre vence. Senão, rode
 `policy show` e use o `backend` dele. `skill` seleciona este runner. `mcp` seleciona as
-ferramentas `alethe_*` do app Alethe quando existirem. `auto` prefere essas ferramentas quando
+ferramentas MCP de quadro de um app de orquestração conectado, quando existirem. `auto` prefere essas ferramentas quando
 disponíveis.
 
-Python é opcional. Se `python --version`, `python3 --version` e `py --version` falharem ou
-ficarem abaixo de 3.9, ou se o usuário pedir, siga [manual.md](manual.md) para detecção, opções,
+Python é opcional. Se não houver Python 3.9+ instalado, escolha antes da execução o modo
+[manual.md](manual.md) para detecção, opções,
 workers em segundo plano e relatório. As outras seções continuam valendo pelos equivalentes manuais.
+Após selecionar um executável, uma falha não autoriza testar outro em silêncio.
 
 O caminho da skill não precisa de MCP. Ele roda workers concorrentes limitados, com isolamento
-opcional em worktree e sessões retomáveis. Workers CLI não aparecem no quadro do app Alethe.
+opcional em worktree e sessões retomáveis. Workers CLI não aparecem no quadro de um app de orquestração.
 
 ## Primeira execução e configuração
 
@@ -85,6 +95,9 @@ orquestração atual: a que `new` iniciou, `use` escolheu ou o último `run` gra
 | --- | --- |
 | uma tarefa, em palavras simples | orquestre-a como o resto deste arquivo descreve |
 | nada | `status`; sem orquestração atual, liste estes comandos em poucas linhas |
+| `guide [fase]` | listar as fases ou carregar uma referência da mesma cópia do runner |
+| `handoff <tarefa>`, “deixa o Codex fazendo em outra branch” | seguir `guide handoff`; devolver branch, worktree e resultados sem esperar integração |
+| `terminals on` ou `terminals off` | `policy set --terminals on` ou `off`; definir se cada worker abre um terminal para acompanhar seu log (ligado por padrão) |
 | `on`, ou uma instrução permanente ("daqui em diante...") | fique ligado, como abaixo |
 | `always`, "sempre ligado", "em todo projeto" | `mode on --everywhere` |
 | `off` | `mode off`; com o padrão ligado, desliga só neste projeto |
@@ -96,9 +109,12 @@ orquestração atual: a que `new` iniciou, `use` escolheu ou o último `run` gra
 | `report [pasta]` | `report`, e mostre a saída como está, sem resumo seu |
 | `report html`, "mostre o relatório" | `report --format html`, que grava `report.html` na pasta e abre; sem Python, preencha `assets/report.html` como em [manual.md](manual.md) |
 | `status` | `status`, e mostre a saída como está |
+| `contas`, `account list` | `account list`; mostre, por provedor, as contas na ordem de uso, se cada uma está logada e a cota dela |
+| `account add <codex\|claude> [nome]` | com o Coding Agent 2 instalado, `account add` chama `coding account add` e a conta fica nos dois; sem ele, ou com `--local`, cria a pasta da conta só no Coding Opus. O login abre no terminal do usuário e é dele: não digite credenciais |
+| `account order <provedor> <nomes...>`, `account remove <provedor> <nome>` | mudar a ordem de uso (inclua `default` para a conta própria do CLI) ou tirar uma conta; `--delete-home` apaga a pasta e o login só com o ok do usuário |
 | `usage` | `usage`; `--refresh-claude` quando a leitura do Claude estiver ausente ou velha, `--refresh-agy` idem para o Antigravity; mostre janelas, resets e idade |
 | `models` | `models`; mostre preços, ranks e idade dos preços |
-| `editor`, "mostre os playbooks" | `editor`, que abre o editor de playbooks (o mesmo do Coding Agent 2) num servidor local em 127.0.0.1; o botão Salvar grava a cópia do usuário. Sem Python, edite o YAML como em [manual.md](manual.md) |
+| `editor`, "mostre os playbooks" | `editor`, que abre o editor de playbooks (o mesmo do Coding Agent 2) num servidor local em 127.0.0.1; o botão Salvar grava a cópia do usuário. A seção Contas da lateral mostra as contas de cada provedor, com origem e cota, e muda a ordem de uso. Sem Python, edite o YAML como em [manual.md](manual.md) |
 | `list` | `list`; `use <pasta>` torna uma delas a atual de novo |
 | `stop` | `stop` e depois `status` quando as ondas terminarem |
 | `clean [--older-than DIAS] [--yes]` | prévia das pastas concluídas com mais de 14 dias; apague só com `--yes` |
@@ -110,6 +126,11 @@ orquestração atual: a que `new` iniciou, `use` escolheu ou o último `run` gra
 | `help` | liste estes comandos em poucas linhas |
 
 ## Modo passivo (padrão)
+
+“Peça ao Codex/Claude para revisar e me devolver” pede um worker daquele CLI, mesmo se o lead
+tiver subagentes próprios. “Varre o projeto inteiro”, “traduza para todos os idiomas” e “porte
+com os testes” ativam a avaliação de unidades de um playbook; não obrigam a fragmentar trabalho
+acoplado. Pedido por um agente vence a preferência automática por outro.
 
 Trabalhe normalmente, sem playbook, plano ou ondas, a menos que o usuário peça. O modo passivo
 vigia o gasto desta sessão do lead e a cota dos provedores. Ele delega só quando um brief curto e
@@ -281,6 +302,22 @@ de cada onda:
 5. O `run` recusa uma onda, e pula workers na fila (`failureKind: quota_low`), num provedor no ou
    acima de `quota.stopAt`. Um worker que bateu num limite falha como `rate_limited`. Trate os dois
    como no passo 4.
+6. **Várias contas.** Com contas extras do Codex ou do Claude (`account add`), cada conta tem sua
+   própria pasta do CLI (`CODEX_HOME` ou `CLAUDE_CONFIG_DIR`), seu login e sua leitura de cota
+   (`usage` mostra as extras em `accounts`, como `codex@trabalho`).
+   - Um worker começa na primeira conta da ordem que está abaixo de `quota.stopAt`.
+   - Se ele bater no limite, o runner o roda de novo na próxima conta com folga, avisando no
+     prompt que pode haver trabalho parcial no diretório. O `outcome.json` lista as tentativas em
+     `accountAttempts`, e o relatório mostra `default -> codex (trabalho)`.
+   - A onda só é recusada por cota quando todas as contas do provedor passaram de `quota.stopAt`.
+   - Um worker com `account` no plano, ou com `resume`, fica numa conta só: a sessão retomada vive
+     na pasta de uma conta.
+   - As contas do Coding Agent 2 entram sozinhas: ele publica as contas dele em
+     `coding-agent-accounts.<instância>.json` na pasta do estado, e elas aparecem com o e-mail
+     como nome (`me-work-example`). Remover ou logar de novo uma delas é no Coding Agent 2.
+     Uma conta Claude dele só entra depois de usada uma vez lá, quando a pasta dela existe.
+   - Diga ao usuário quando um worker mudou de conta. Cada conta precisa ser dele, com assinatura
+     própria; respeite os termos de cada provedor.
 
 O provedor fixado pelo usuário, e a resposta dele, vencem estas regras. Quando você mesmo rodar
 num provedor baixo, diga isso, mantenha seus turnos curtos e passe trabalho a um provedor com

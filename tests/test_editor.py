@@ -13,6 +13,7 @@ from pathlib import Path
 
 # Tests read the generic playbooks, not the personal default the skill ships.
 os.environ.setdefault("CODING_OPUS_BUNDLED_PLAYBOOKS", str(Path(__file__).resolve().parent / "fixtures" / "playbooks.yaml"))
+os.environ.setdefault("CODING_OPUS_TERMINALS", "0")
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "skills" / "coding" / "scripts" / "orchestrate.py"
@@ -23,9 +24,9 @@ BUNDLED = Path(os.environ["CODING_OPUS_BUNDLED_PLAYBOOKS"])
 class EditorPageTest(unittest.TestCase):
     def test_page_is_one_file_without_external_resources(self):
         page = PAGE.read_text(encoding="utf-8")
-        self.assertIn('<div id="root"></div>', page)
+        self.assertIn('<div id="root">', page)
         self.assertNotRegex(page, r'<script[^>]+src=')
-        self.assertNotRegex(page, r'<link[^>]+href=')
+        self.assertNotRegex(page, r'<link[^>]+href=(?!["\']data:)')
         # The page talks only to the server that served it, through relative /api paths.
         self.assertNotRegex(page, r'fetch\(\s*["\']https?://')
         self.assertIn("/api/playbooks", page)
@@ -86,6 +87,56 @@ class EditorServerTest(unittest.TestCase):
         self.assertEqual(self.request(base, "/api/playbooks", token="wrong")[0], 401)
         self.assertEqual(self.request(base, "/api/playbooks", token=token, host="evil.example:80")[0], 403)
         self.assertEqual(self.request(base, "/api/ping", token=token)[0], 200)
+
+    def test_lists_the_models_each_provider_offers(self):
+        codex_home = self.root / "codex"
+        codex_home.mkdir()
+        (codex_home / "models_cache.json").write_text(json.dumps({"models": [
+            {"slug": "gpt-9-sol", "visibility": "list", "description": "Latest workhorse."},
+            {"slug": "gpt-8-sol", "visibility": "list", "upgrade": {"model": "gpt-9-sol"}},
+            {"slug": "internal-review", "visibility": "hide"},
+        ]}), encoding="utf-8")
+        self.env["CODEX_HOME"] = str(codex_home)
+        base, token, _ = self.start()
+        self.assertEqual(self.request(base, "/api/models")[0], 401)
+        body = json.loads(self.request(base, "/api/models", token=token)[1])
+        self.assertTrue(body["ok"], body)
+        codex = body["catalog"]["providers"]["codex"]
+        self.assertEqual(codex[:2], [
+            {"id": "gpt-9-sol", "source": "cli", "description": "Latest workhorse.", "upgrade": None},
+            {"id": "gpt-8-sol", "source": "cli", "description": None, "upgrade": "gpt-9-sol"},
+        ])
+        self.assertNotIn("internal-review", [model["id"] for model in codex])
+        self.assertIn("claude-opus-5-5", [model["id"] for model in body["catalog"]["providers"]["claude"]])
+
+    def test_lists_and_orders_accounts(self):
+        codex_home = self.root / "codex"
+        codex_home.mkdir()
+        managed = self.root / "managed" / "home"
+        managed.mkdir(parents=True)
+        self.env["CODEX_HOME"] = str(codex_home)
+        (self.root / "coding-agent-accounts.test.json").write_text(json.dumps({
+            "version": 1, "active": {"codex": "c1", "claude": None},
+            "providers": {"codex": [{"id": "c1", "email": "me@work.example", "home": str(managed)}], "claude": []},
+        }), encoding="utf-8")
+        base, token, _ = self.start()
+        self.assertEqual(self.request(base, "/api/accounts")[0], 401)
+        body = json.loads(self.request(base, "/api/accounts", token=token)[1])
+        self.assertTrue(body["ok"], body)
+        codex = body["accounts"]["providers"]["codex"]
+        self.assertEqual([(row["name"], row["from"]) for row in codex],
+                         [("default", "cli"), ("me-work-example", "coding-agent")])
+        self.assertTrue(codex[1]["activeInCodingAgent"])
+        status, raw = self.request(base, "/api/accounts/order", token=token,
+                                   body={"provider": "codex", "names": ["me-work-example", "default"]})
+        body = json.loads(raw)
+        self.assertEqual(status, 200)
+        self.assertEqual([row["name"] for row in body["accounts"]["providers"]["codex"]],
+                         ["me-work-example", "default"])
+        body = json.loads(self.request(base, "/api/accounts/order", token=token,
+                                       body={"provider": "codex", "names": ["ghost"]})[1])
+        self.assertFalse(body["ok"])
+        self.assertIn("unknown: ghost", body["error"])
 
     def test_reads_the_bundled_playbooks_until_a_user_copy_exists(self):
         base, token, payload = self.start()

@@ -1,12 +1,12 @@
 # Coding Opus
-![skill](https://img.shields.io/badge/skill-v32-1f6feb) ![license](https://img.shields.io/badge/license-MIT-555)
+![skill](https://img.shields.io/badge/skill-v36-1f6feb) ![license](https://img.shields.io/badge/license-MIT-555)
 
 Uma skill global para Claude Code e Codex que melhora a performance e a economia da IA com dois pilares:
 
 | Pilar | O que faz |
 | --- | --- |
 | **1. Memória** | Um *second brain* global em `Documentos/second brain`, com decisões, estudos e notas que a IA consulta antes de responder. Ela para de redescobrir o que já sabe e de contradizer o que já foi decidido. |
-| **2. Orquestração inteligente** | Recriada a partir da [Alethe](https://github.com/Kc1t/alethe-orchestrate-skill): planeja, entrega unidades limitadas para os workers mais baratos e capazes (Codex, Claude Code, Antigravity, Kimi ou qualquer CLI), vigia a cota e relata o que cada worker fez e custou. |
+| **2. Orquestração inteligente** | Planeja, entrega unidades limitadas para os workers mais baratos e capazes (Codex, Claude Code, Antigravity, Kimi ou qualquer CLI), vigia a cota e relata o que cada worker fez e custou. |
 
 ## Como os pilares trabalham juntos
 
@@ -59,10 +59,16 @@ Instale só uma forma e remova as skills `alethe`, `obsidian`, `obsidian-second-
 | `/coding registrar` | grava a orquestração atual como nota, depois da prévia |
 | `/coding report` | o que a orquestração fez e custou |
 | `/coding setup` | checa provedores e a política da orquestração e faz o onboarding |
+| `/coding doctor` | registra a cópia do runner e o Python da sessão; reutilize `runtime.command` |
+| `/coding guide [fase]` | lista ou imprime só a referência da fase, da mesma cópia do runner |
+| `/coding handoff <tarefa>` | inicia um worker numa branch/worktree própria, sem esperar integração |
 
 No Codex, use `$coding`. Como plugin, o Claude Code mostra a skill com o prefixo do plugin (`/coding:coding`).
 
 Os outros comandos curtos da orquestração (`status`, `usage`, `stop`, `mode on`, `save`, `max`...) continuam valendo.
+
+Cada worker abre por padrão um terminal que acompanha o log dele. `/coding terminals on|off` muda esse padrão; `run --terminals` e
+`--no-terminals` valem só para a onda. `CODING_OPUS_TERMINALS=0` desativa todos eles.
 
 ## Estrutura
 
@@ -91,7 +97,7 @@ py scripts/brain.py record --title "Auditoria final" --folder 30-Projetos --writ
 
 ## Estado da orquestração
 
-Política, playbooks, preços, cota e histórico ficam em `%APPDATA%\CodingOpus` (Windows) ou `~/.config/coding-opus`. Se você usava a Alethe, a primeira execução copia `%APPDATA%\Alethe` para lá e renomeia os arquivos `alethe-*` para `coding-opus-*`, sem apagar a pasta antiga.
+Política, playbooks, preços, cota e histórico ficam em `%USERPROFILE%\.coding-opus` (Windows; fora do AppData, que o app Claude para Windows virtualiza) ou `~/.config/coding-opus`. Se você usava a Alethe, a primeira execução copia `%APPDATA%\Alethe` para lá e renomeia os arquivos `alethe-*` para `coding-opus-*`, sem apagar a pasta antiga.
 
 ## Créditos e licença
 

@@ -52,7 +52,7 @@ Run these yourself, in one batch, and keep only the answers:
 | Worker CLIs | `<cli> --version` for `claude`, `codex`, `agy`, `kimi`, plus any other agent CLI on PATH |
 | Logged in | a one-word prompt on the cheap tier, only for a CLI you plan to use; an auth error means "log in first" |
 | Git | `git rev-parse --show-toplevel` and `git status --porcelain`; worktrees need a repository |
-| Saved setup | the playbooks copy, `coding-opus-playbooks.yaml` in `%APPDATA%\CodingOpus\` on Windows or `~/.config/coding/` elsewhere; otherwise `playbooks.yaml` in this skill |
+| Saved setup | the playbooks copy, `coding-opus-playbooks.yaml` in `%USERPROFILE%\.coding-opus\` on Windows or `~/.config/coding/` elsewhere; otherwise `playbooks.yaml` in this skill |
 | Routes | for 9router or another gateway, read its config or environment; never start or change it |
 
 Read only the playbooks file's active `profile`, provider order, `pickOrder` and playbook summaries
