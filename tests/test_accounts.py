@@ -172,7 +172,7 @@ class AccountsTest(unittest.TestCase):
         self.assertEqual((outcome["failureKind"], outcome["account"]), ("rate_limited", None))
 
     def coding_agent_file(self, codex=(), claude=(), active=None, instance="coding-agent-2"):
-        # Same shape as coding-opus-accounts-export.ts writes.
+        # A legacy export still present beside the policy.
         def entries(items):
             return [{"id": item_id, "email": email, "label": None, "home": str(home)} for item_id, email, home in items]
         path = self.root / f"coding-agent-accounts.{instance}.json"
@@ -186,58 +186,25 @@ class AccountsTest(unittest.TestCase):
         home.mkdir(parents=True)
         return home
 
-    def test_coding_agent_accounts_join_the_rotation_by_email(self):
+    def test_legacy_agent_accounts_are_excluded_from_rotation(self):
         work = self.managed_home("codex-1")
-        self.coding_agent_file(codex=[("codex-1", "Me@Work.example", work),
-                                      ("codex-2", "me@work.example", self.managed_home("codex-2")),
-                                      ("same-as-default", "sys@example", self.codex)],
-                               claude=[("claude-1", "me@home.example", self.root / "not-prepared")])
-        self.assertEqual(runner.account_rotation(self.policy, "codex"),
-                         ["default", "me-work-example", "me-work-example-codex2"])
-        self.assertEqual(runner.account_home(self.policy, "codex", "me-work-example"), work)
-        # A Claude account Coding Agent 2 has not prepared yet stays out of the rotation.
-        self.assertEqual(runner.account_rotation(self.policy, "claude"), [])
-        with self.assertRaisesRegex(runner.PlanError, "not ready yet"):
-            runner.account_home(self.policy, "claude", "me-home-example")
-        with self.assertRaisesRegex(runner.PlanError, "belongs to Coding Agent 2"):
-            runner.remove_account(self.policy, "codex", "me-work-example", delete_home=False)
-        local = runner.add_account(self.policy, "codex", "spare")
-        self.assertEqual(runner.account_rotation(self.policy, "codex"),
-                         ["default", "me-work-example", "me-work-example-codex2", "spare"])
-        self.assertTrue(Path(local["home"]).is_dir())
-        self.assertEqual(runner.order_accounts(self.policy, "codex", ["me-work-example-codex2", "default"]),
-                         ["me-work-example-codex2", "default", "spare", "me-work-example"])
+        manifest = self.coding_agent_file(codex=[("codex-1", "Me@Work.example", work)])
+        runner.add_account(self.policy, "codex", "spare")
+        data = runner.load_accounts(self.policy)
+        data["order"]["codex"] = ["me-work-example", "spare", "default"]
+        runner.save_accounts(self.policy, data)
 
-    def test_a_broken_or_foreign_file_is_ignored(self):
-        (self.root / "coding-agent-accounts.broken.json").write_text("{", encoding="utf-8")
-        self.coding_agent_file(codex=[("x", "x@example", "relative/home")], instance="other")
-        self.assertEqual(runner.account_rotation(self.policy, "codex"), [])
+        self.assertEqual(runner.account_rotation(self.policy, "codex"), ["spare", "default"])
+        self.assertTrue(manifest.is_file())
+        self.assertTrue(work.is_dir())
+        with self.assertRaisesRegex(runner.PlanError, "no account me-work-example"):
+            runner.account_home(self.policy, "codex", "me-work-example")
 
-    def test_add_goes_through_coding_agent_when_it_publishes_accounts(self):
+    def test_add_uses_the_opus_registry_in_the_presence_of_an_agent_export(self):
         self.coding_agent_file()
-        completed = mock.Mock(returncode=0)
-        with mock.patch.object(runner, "coding_agent_cli", return_value=["coding"]), \
-                mock.patch.object(runner.subprocess, "run", return_value=completed) as run:
-            code, _, err = self.call("account", "add", "codex", "--policy", self.policy)
-        self.assertEqual(code, 0)
-        self.assertEqual(run.call_args.args[0], ["coding", "account", "add", "--agent", "codex"])
-        self.assertFalse((self.root / runner.ACCOUNTS_FILE).exists())
-        with mock.patch.object(runner, "coding_agent_cli", return_value=None):
-            code, _, err = self.call("account", "add", "codex", "--policy", self.policy)
-        self.assertNotEqual(code, 0)
-        self.assertIn("--local", err)
-        code, _, _ = self.call("account", "add", "codex", "solo", "--local", "--no-login", "--policy", self.policy)
+        code, _, _ = self.call("account", "add", "codex", "solo", "--no-login", "--policy", self.policy)
         self.assertEqual(code, 0)
         self.assertEqual(runner.account_rotation(self.policy, "codex"), ["default", "solo"])
-
-    def test_a_worker_moves_to_a_coding_agent_account(self):
-        self.coding_agent_file(codex=[("codex-1", "me@work.example", self.managed_home("codex-1"))])
-        code, result, _ = self.run_plan(self.plan("linked"))
-        self.assertEqual(code, 0)
-        outcome = result["workers"][0]
-        self.assertEqual(outcome["account"], "me-work-example")
-        stdout = (self.root / "linked" / "workers" / "scout" / "stdout.log").read_text(encoding="utf-8")
-        self.assertIn("done on home; retried=True", stdout)
 
     def test_a_plan_names_only_known_accounts(self):
         with self.assertRaisesRegex(runner.PlanError, "no account ghost"):

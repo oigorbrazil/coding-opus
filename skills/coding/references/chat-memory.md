@@ -91,10 +91,47 @@ referências textuais, com anexos binários e imagens conservados na origem.
 
 memory/memory.sqlite3 é o registro transacional. Cada sessão também tem
 memory/sessions/ID/context.md e transcript.md, legíveis no Obsidian ou em outra IA.
-IDs derivam de agente, sessão e projeto. SQLite serializa escritas concorrentes e cada Markdown
+Os registros de captura conservam os IDs por agente, sessão e projeto. A lista de conversas
+reúne os registros do mesmo agente e sessão de origem, mantendo cada pasta associada e o
+contexto das mensagens. SQLite serializa escritas concorrentes e cada Markdown
 é substituído atomicamente. Se houver queda durante uma escrita, a consulta SQL é a fonte de
 verdade e o próximo registro recompõe os Markdown. A busca geral brain.py find ignora memory.
 Use chat_memory.py find/read para consultar conversas com limites de resultados.
+
+A aba Memória e as consultas da skill exibem o título original das conversas locais que já
+foram capturadas. O Codex fornece o título pelo índice de sessões. No Claude Code, o título
+personalizado prevalece sobre o nome gerado. A busca usa o ID da sessão mesmo quando o chat é
+retomado em outra pasta. A lista e os detalhes são atualizados ao voltar para a aba Memória.
+Busque pelo título atual ou pelo texto de uma mensagem. Se os metadados
+da sessão estiverem indisponíveis, aparece o título salvo na memória.
+`Renomear` na aba Memória define um nome local para a conversa inteira, em todas as pastas
+associadas. A busca aceita o nome local e o automático. Para voltar ao título do cliente ou
+ao título registrado na captura, use **Voltar ao nome automático**.
+
+**Excluir**, ao lado do título, pede confirmação e remove a cópia local da conversa da
+Memória, em todas as pastas associadas. Uma futura mensagem capturada desse chat pode criar
+um novo registro.
+
+Em uma conversa da aba **Memória**, use **Continuar em** e escolha um modelo dos playbooks
+ou informe outro. O Opus monta um prompt local com o resumo, o próximo passo e trechos das
+mensagens recentes que estiverem disponíveis. Revise o texto e use **Copiar prompt** para
+colá-lo no chat de destino. A primeira linha do prompt liga o chat novo ao anterior quando
+o pedido é capturado pelos hooks ou registrado com `request`. Chats já existentes também podem
+ser ligados pelo checkpoint com `--parent ID-ANTERIOR`.
+
+**Usar ai-memory no terminal**, dentro de **Continuar em**, copia um comando que abre
+`ai-memory resume` na pasta do projeto. Escolha na lista o trabalho salvo e o agente de
+destino. A opção requer o ai-memory configurado para o projeto. O histórico do Opus
+continua disponível no prompt copiável e nas conversas da Memória.
+
+Em **Resumo**, use **Criar checkpoint** ou **Atualizar checkpoint** para guardar o objetivo, o
+andamento, as tentativas e bloqueios, as verificações e o próximo passo. No terminal, os campos
+adicionais são `--objective`, `--attempts` e `--checks`. Cada gravação guarda uma versão. Uma
+interrupção mantém o último checkpoint e, quando houver mensagens posteriores, a prévia de
+**Continuar em** inclui as mais recentes.
+
+**Salvar como decisão** abre um rascunho editável. A confirmação grava a nota Markdown no
+Second Brain com um link para a conversa de origem.
 
 Contratos dos clientes
 

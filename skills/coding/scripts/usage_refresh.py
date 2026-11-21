@@ -194,7 +194,7 @@ def fetch_codex(env=None):
     messages = output_queue(process)
     try:
         process.stdin.write((json.dumps({"id": 1, "method": "initialize", "params": {
-            "clientInfo": {"name": "coding-opus-usage", "version": "36"}}}) + "\n").encode())
+            "clientInfo": {"name": "coding-opus-usage", "version": "37"}}}) + "\n").encode())
         process.stdin.flush()
         deadline = time.monotonic() + TIMEOUT_SECONDS
         while time.monotonic() < deadline:

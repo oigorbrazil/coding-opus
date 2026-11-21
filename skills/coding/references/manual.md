@@ -205,7 +205,7 @@ needs only what you know; use `null` for anything its CLI did not report:
 - No `diagram.py`: draw the plan as a Mermaid flowchart when the user wants to see it.
 - No `editor`: the editor needs `scripts/editor_server.py` (Python). Without it, edit the user's
   `coding-opus-playbooks.yaml` next to the policy directly (copy the bundled `playbooks.yaml` there
-  first if it does not exist) and keep its structure; Coding Agent 2's Settings → Playbooks edits
+  first if it does not exist) and keep its structure; the editor edits
   the same file.
   Open the page; a red line at the top names a YAML error.
 - No Windows `.cmd` shim handling: run the commands through your own shell, which handles the shim,

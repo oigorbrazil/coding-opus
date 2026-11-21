@@ -1,5 +1,5 @@
 # Coding Opus
-![skill](https://img.shields.io/badge/skill-v36-1f6feb) ![license](https://img.shields.io/badge/license-MIT-555)
+![skill](https://img.shields.io/badge/skill-v37-1f6feb) ![license](https://img.shields.io/badge/license-MIT-555)
 
 Uma skill global para Claude Code e Codex que melhora a performance e a economia da IA com dois pilares:
 

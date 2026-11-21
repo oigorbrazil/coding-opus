@@ -1,6 +1,6 @@
 {
   "name": "coding",
-  "version": "36.0.0",
+  "version": "37.0.0",
   "description": "Mais performance e economia para a IA com dois pilares: memória (second brain global em Documentos) e orquestração inteligente de workers Codex, Claude Code, Antigravity, Kimi ou qualquer CLI.",
   "license": "MIT",
   "keywords": [

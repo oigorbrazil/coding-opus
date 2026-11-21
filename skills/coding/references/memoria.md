@@ -46,7 +46,19 @@ instalação. Rode esse comando mesmo com o second brain já criado quando a tar
 a skill e o aplicativo. A primeira abertura do editor também instala o aplicativo se ele estiver
 ausente. Se a instalação falhar, mostre o erro do setup quando disponível. Ao abrir o editor,
 o navegador serve de alternativa.
+
+No macOS e no Linux, o mesmo `brain.py install` (e a primeira abertura do editor) cria um atalho:
+`~/Applications/Coding Opus.app` no Mac, ou `coding-opus.desktop` no menu de aplicativos do Linux
+(`~/.local/share/applications`). O atalho sobe o servidor do editor e mostra a página numa janela de
+app do Chrome, Edge, Chromium ou Brave (`--app`); sem um deles, abre no navegador padrão.
+`desktop_editor.py status` diz se o atalho existe e qual navegador será usado. Não há atalho numa
+sessão SSH nem num Linux sem `DISPLAY` ou `WAYLAND_DISPLAY`.
 Use `--no-desktop` para pular a instalação do app durante a configuração da memória.
+
+Abra **Lembretes** no menu principal do editor. Use **Novo lembrete** para escolher o título e a
+data. **Documentar no Second Brain** vem com a data de hoje. O botão **Documentar** abre o
+formulário de nova nota e conclui o lembrete ao salvar. Você pode editar a data, concluir um
+lembrete manual ou reabrir um lembrete concluído.
 
 Numa pasta **nova**, pergunte **"Quais são as três áreas da sua vida com mais anotações, na ordem
 das pastas 10, 20 e 30?"**. Se a resposta vier antes da criação, use `install --areas A B C`. Se

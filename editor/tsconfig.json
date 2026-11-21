@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": false,
+    "types": ["vite/client", "node"],
+    "paths": {
+      "@/i18n/i18n": ["./config/playbooks-editor/stubs.tsx"],
+      "@/i18n/use-ui-language-revision": ["./config/playbooks-editor/stubs.tsx"],
+      "@/lib/agent-catalog": ["./config/playbooks-editor/stubs.tsx"],
+      "sonner": ["./config/playbooks-editor/stubs.tsx"],
+      "@/*": ["./src/renderer/src/*"]
+    }
+  },
+  "include": ["config/playbooks-editor/**/*", "src/**/*"]
+}

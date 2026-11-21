@@ -1,0 +1,148 @@
+/* Coding Agent 2's theme for the skill's standalone playbooks editor: the same liquid glass tokens
+   the app's glass panels resolve to (DESIGN.md), in light and dark. */
+@font-face {
+  font-family: 'Inter';
+  src: url('../../src/renderer/src/assets/fonts/InterVariable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+  --environment: #e5e5ea;
+  --panel-base: #ffffff;
+  --panel-card-base: #ffffff;
+  --panel-alpha: 40%;
+  --panel-card-alpha: 55%;
+  --background: color-mix(in srgb, var(--panel-base) var(--panel-alpha), transparent);
+  --foreground: #1f1f1f;
+  --card: color-mix(in srgb, var(--panel-card-base) var(--panel-card-alpha), transparent);
+  --popover: #fafafc;
+  --floating-surface: rgb(250 250 252 / 0.72);
+  --primary: #0071e3;
+  --primary-foreground: #ffffff;
+  --muted: #efeff0;
+  --muted-foreground: #6d6d72;
+  --accent: #ededee;
+  --border: #e2e2e3;
+  --input: #e2e2e3;
+  --destructive: #e40014;
+  --status-success: #147638;
+  --status-warning: #ca8a04;
+  --app-font-family:
+    'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+  --font-sans: var(--app-font-family);
+  /* As in the app: labels styled mono read as Inter; only real code keeps a monospace face. */
+  --font-mono: var(--app-font-family);
+  --code-font-family:
+    'SF Mono', SFMono-Regular, ui-monospace, 'Cascadia Code', Menlo, Consolas, 'Liberation Mono',
+    monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --environment: #0b0b0d;
+    --panel-base: #121214;
+    --panel-card-base: color-mix(in srgb, #1c1c1f 78%, #8e8e93);
+    --panel-alpha: 22%;
+    --panel-card-alpha: 30%;
+    --foreground: #f5f5f7;
+    --popover: #1c1c1f;
+    --floating-surface: rgb(36 36 38 / 0.68);
+    --primary-foreground: #ffffff;
+    --muted: rgb(255 255 255 / 0.08);
+    --muted-foreground: #98989f;
+    --accent: rgb(255 255 255 / 0.12);
+    --border: rgb(255 255 255 / 0.08);
+    --input: rgb(255 255 255 / 0.15);
+    --destructive: #ff6568;
+    --status-success: #86efac;
+    --status-warning: #eab308;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--environment);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 14px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+.editor-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: clip;
+}
+
+.editor-notice {
+  border-bottom: 1px solid var(--border);
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.editor-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.editor-content {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.startup-bootstrap {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: var(--foreground);
+  background: var(--environment);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.editor-body[hidden] {
+  display: none;
+}
+
+/* The shipped OpenAI mark is white; dark it on a light page. */
+@media (prefers-color-scheme: light) {
+  img[data-brand='codex'] {
+    filter: invert(1);
+  }
+}

@@ -1,0 +1,38 @@
+/* Coding Agent 1's design tokens, mapped onto Coding Agent 2's theme for the ported playbooks editor. */
+.ca1-playbook-tokens {
+  /* Same neutral backing as the Opus standalone editor, so the wallpaper never reads through the canvas. */
+  background-color: var(--environment);
+  --bg: var(--background);
+  --bg-elevated: var(--card);
+  --bg-sunken: color-mix(in oklab, var(--background) 82%, var(--foreground) 3%);
+  --panel: var(--card);
+  --panel-hover: var(--muted);
+  --fg: var(--foreground);
+  --fg-muted: color-mix(in oklab, var(--foreground) 78%, transparent);
+  --fg-faint: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+  --text-tertiary: var(--muted-foreground);
+  --text-quaternary: color-mix(in oklab, var(--muted-foreground) 65%, transparent);
+  --border-strong: color-mix(in oklab, var(--foreground) 22%, transparent);
+  --accent: var(--primary);
+  --accent-strong: var(--primary);
+  --accent-on: var(--primary-foreground);
+  --accent-soft: color-mix(in oklab, var(--primary) 12%, transparent);
+  --accent-border: color-mix(in oklab, var(--primary) 35%, transparent);
+  --chip-accent: var(--primary);
+  --status-working: var(--status-success);
+  --status-waiting: var(--status-warning);
+  --status-offline: var(--destructive);
+  --status-offline-soft: color-mix(in oklab, var(--destructive) 15%, transparent);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --clean-row-height: 30px;
+  --clean-control-height: 30px;
+  --clean-control-radius: 4px;
+  --clean-popover-radius: 4px;
+  --clean-popover-animation: none;
+  --clean-focus-border: var(--border-strong);
+  --clean-shadow: none;
+  /* Panels that float over the canvas (palette, inspector, bars) are frosted glass, so nodes never read through them. */
+  --overlay-surface: var(--floating-surface, var(--bg-elevated));
+  --overlay-blur: blur(24px) saturate(1.8);
+}

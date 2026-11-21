@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Coding Opus — local server for the playbooks editor.
 
-`orchestrate.py editor` starts this in the background. It serves `assets/editor.html` (the same
-editor Coding Agent 2 ships) on 127.0.0.1 and lets that page read and save the playbooks file the
+`orchestrate.py editor` starts this in the background. It serves `assets/editor.html` (built from
+the repository's `editor/` folder) on 127.0.0.1 and lets that page read and save the playbooks file the
 skill plans with. Every API call needs the one-time token from the page URL. The server stops on
 its own a little after the page is closed. Standard library only.
 """
@@ -44,7 +44,7 @@ class EditorState:
         self.generator = PlaybookGenerator(policy_path, usage=self.usage_refresh)
         self.account_manager = AccountManager(policy_path)
         self.workspace = WorkspaceApi(policy_path)
-        self.library = KnowledgeLibrary()
+        self.library = KnowledgeLibrary(policy_path)
 
     def playbooks(self) -> Dict[str, Any]:
         user = orchestrate.user_playbooks_path(self.policy_path)

@@ -4,7 +4,7 @@ description: Coding Opus reúne second brain global, memória compartilhada de c
 argument-hint: '[tarefa] | install | onde | consultar <termos> | registrar [título] | doctor | guide [fase] | handoff <tarefa> | terminals on|off | editor | on | off | passive | spend | save | max | freestyle | careful | report | status | usage | models | list | stop | clean | budget <limite> | mark <worker> <used|partial|discarded> | setup | help'
 license: MIT
 metadata:
-  version: "36"
+  version: "37"
   codingOpus: '1'
   upstream: 'Kc1t/alethe-orchestrate-skill@ab81104 + n1systempc/obsidian-second-brain@4f43c49'
 ---
@@ -83,6 +83,7 @@ a referência numa cópia diferente.
 | `routing`                                    | estratégia, provedores e economia                                  |
 | `operations`                                 | executar, validar resultados, integrar e relatar                   |
 | `handoff`                                    | entregar trabalho numa branch própria sem esperar retorno          |
+| `eval`                                       | avaliar o comportamento dos workers depois de mudar o harness      |
 | `memoria`, `onboarding`, `manual`, `diagram` | operação correspondente                                            |
 
 ## Comandos curtos
@@ -96,7 +97,7 @@ a referência numa cópia diferente.
 | tarefa, revisão com retorno, “peça ao Codex/Claude…”                              | guia `orquestracao`; usar worker do CLI nomeado                                             |
 | “varre o projeto inteiro”, “traduza para todos os idiomas”, “porte com os testes” | considerar unidades dos playbooks; manter com o lead se não houver independência útil       |
 | `handoff <tarefa>`, “deixa fazendo em outra branch”                               | guia `handoff`; iniciar e devolver caminhos, sem esperar nem integrar                       |
-| `editor`                                                                          | abrir o editor com o runner fixado; no Windows, instalar o aplicativo automaticamente se estiver ausente |
+| `editor`                                                                          | abrir o editor com o runner fixado; instala o app (Windows) ou o atalho (Mac, Linux) se estiver ausente |
 | `terminals on` ou `terminals off`                                                 | `policy set --terminals on` ou `off`; abrir terminais que só acompanham os logs dos workers |
 | `report`, `status`, `usage`, `models`, `list`, `stop`, `clean`, `budget`, `mark`  | comando correspondente; detalhes em `guide orquestracao`                                    |
 | `on`, `off`, `passive`, `save`, `max`, `freestyle`, `careful`                     | guia `orquestracao` antes de alterar o modo                                                 |

@@ -85,6 +85,18 @@
         "allowUnsafe": { "type": "boolean", "default": false },
         "mcp": { "type": "boolean", "default": false },
         "idleTimeoutSeconds": { "type": "integer", "minimum": 5, "maximum": 86400 },
+        "resources": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,63}$" },
+          "description": "Shared things this worker's checks hold, such as port:3000, db:test or build:dist (lowercased by the runner). Workers that name the same resource run one at a time."
+        },
+        "allowCommands": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._/\\\\:=@+~-]{0,199}$" },
+          "description": "Write workers only. Command prefixes a Claude worker may run without a prompt, such as 'python -m pytest' (passed as --allowedTools Bash(...) rules). Without it a Claude writer cannot run any shell command, its checks included. Other providers ignore it."
+        },
         "account": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$",

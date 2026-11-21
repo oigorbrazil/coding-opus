@@ -110,11 +110,11 @@ orquestração atual: a que `new` iniciou, `use` escolheu ou o último `run` gra
 | `report html`, "mostre o relatório" | `report --format html`, que grava `report.html` na pasta e abre; sem Python, preencha `assets/report.html` como em [manual.md](manual.md) |
 | `status` | `status`, e mostre a saída como está |
 | `contas`, `account list` | `account list`; mostre, por provedor, as contas na ordem de uso, se cada uma está logada e a cota dela |
-| `account add <codex\|claude> [nome]` | com o Coding Agent 2 instalado, `account add` chama `coding account add` e a conta fica nos dois; sem ele, ou com `--local`, cria a pasta da conta só no Coding Opus. O login abre no terminal do usuário e é dele: não digite credenciais |
+| `account add <codex\|claude> <nome>` | cria uma conta própria do Coding Opus e abre o login no terminal do usuário. O usuário faz o login |
 | `account order <provedor> <nomes...>`, `account remove <provedor> <nome>` | mudar a ordem de uso (inclua `default` para a conta própria do CLI) ou tirar uma conta; `--delete-home` apaga a pasta e o login só com o ok do usuário |
 | `usage` | `usage`; `--refresh-claude` quando a leitura do Claude estiver ausente ou velha, `--refresh-agy` idem para o Antigravity; mostre janelas, resets e idade |
 | `models` | `models`; mostre preços, ranks e idade dos preços |
-| `editor`, "mostre os playbooks" | `editor`, que abre o editor de playbooks (o mesmo do Coding Agent 2) num servidor local em 127.0.0.1; o botão Salvar grava a cópia do usuário. A seção Contas da lateral mostra as contas de cada provedor, com origem e cota, e muda a ordem de uso. Sem Python, edite o YAML como em [manual.md](manual.md) |
+| `editor`, "mostre os playbooks" | `editor`, que abre o editor de playbooks (código em `editor/` na raiz do repositório) num servidor local em 127.0.0.1; o botão Salvar grava a cópia do usuário. A seção Contas da lateral mostra as contas de cada provedor, com origem e cota, e muda a ordem de uso. Sem Python, edite o YAML como em [manual.md](manual.md) |
 | `list` | `list`; `use <pasta>` torna uma delas a atual de novo |
 | `stop` | `stop` e depois `status` quando as ondas terminarem |
 | `clean [--older-than DIAS] [--yes]` | prévia das pastas concluídas com mais de 14 dias; apague só com `--yes` |
@@ -245,9 +245,13 @@ condições de escolha e o resumo dos playbooks. Depois, `playbook <id>` para o 
 resolvidos e regras de cota e orçamento. Os dois aceitam `--json`. O `playbook` sem argumentos
 mostra o arquivo inteiro, só para edição ou onboarding. Veja [playbooks.md](playbooks.md).
 
-1. Escolha um playbook pela `pickOrder`. Um playbook nomeado pelo usuário vence. O nome de uma
-   estratégia do runner também vence e mantém o comportamento de onda única descrito abaixo.
-   `complete` se adapta por unidade quando nada mais serve.
+1. Escolha a família antes de ler a `pickOrder`. Use a família que o usuário pediu; se ele não
+   escolher, use Claude quando o lead for Claude Code e GPT e outras IAs nos demais clientes.
+   Use o ID da família escolhida no `new --playbook` e no campo `playbook` de cada onda, por
+   exemplo `review-gate-claude` ou `review-gate-other`; o nome sem família (`review-gate`) é
+   recusado e a mensagem traz as duas opções. Um playbook nomeado pelo usuário
+   prevalece. O nome de uma estratégia do runner mantém o comportamento de onda única.
+   Complete se adapta por unidade quando nada mais serve.
 2. Rode as fases em ordem. `who: lead` é você, nesta sessão. Toda outra fase é uma onda de workers:
    - `runner` é a `strategy` do plano;
    - `workers` é o número de unidades;
@@ -312,10 +316,6 @@ de cada onda:
    - A onda só é recusada por cota quando todas as contas do provedor passaram de `quota.stopAt`.
    - Um worker com `account` no plano, ou com `resume`, fica numa conta só: a sessão retomada vive
      na pasta de uma conta.
-   - As contas do Coding Agent 2 entram sozinhas: ele publica as contas dele em
-     `coding-agent-accounts.<instância>.json` na pasta do estado, e elas aparecem com o e-mail
-     como nome (`me-work-example`). Remover ou logar de novo uma delas é no Coding Agent 2.
-     Uma conta Claude dele só entra depois de usada uma vez lá, quando a pasta dela existe.
    - Diga ao usuário quando um worker mudou de conta. Cada conta precisa ser dele, com assinatura
      própria; respeite os termos de cada provedor.
 
@@ -323,6 +323,36 @@ O provedor fixado pelo usuário, e a resposta dele, vencem estas regras. Quando 
 num provedor baixo, diga isso, mantenha seus turnos curtos e passe trabalho a um provedor com
 folga. Se uma leitura estiver velha, diga isso em vez de afirmar o número. Registre cada mudança
 com `note "<motivo e leituras>" --kind switch`. Veja a referência para leituras desconhecidas.
+
+### Trocar de família no meio de uma estratégia
+
+O runner limita os workers à família indicada pelo playbook. Se ficar sem cota viável nessa
+família, a mensagem do `run` indica o playbook correspondente e a fase de onde continuar,
+quando ambos ainda têm as mesmas fases.
+
+1. **Pergunte antes.** Trocar de família muda modelos, custo e comportamento. Diga ao usuário o
+   que acabou, quando reseta e o que muda, e ofereça esperar ou trocar, como no passo 4 acima.
+   Nunca troque sem a resposta dele.
+2. Com o sim, registre `note "para review-gate-other: cota do Claude acabou" --kind switch` e mande as
+   próximas ondas na mesma orquestração (`run --in current`) com `"playbook"` do gêmeo, a partir
+   da fase em que parou.
+3. Unidades pela metade recomeçam com um brief novo que aponta para os arquivos e o diff que o
+   worker anterior deixou: uma sessão nunca passa de um provedor para outro. Ajuste o brief à
+   família nova (um writer Claude precisa de `allowCommands`; um worker Codex não).
+
+### Passar o lead para outro CLI
+
+Você, o lead, também gasta cota. Quando a sua estiver perto de acabar, ou o usuário quiser seguir
+em outro CLI, não espere o corte:
+
+1. Rode `lead-handoff --reason "<motivo>"`. Ele grava `LEAD-HANDOFF.md` na pasta da orquestração:
+   ondas, unidades prontas e pendentes com diffs e worktrees, as últimas mudanças de plano, o
+   playbook gêmeo e os próximos passos.
+2. Salve o mesmo arquivo na memória compartilhada (`chat_memory.py checkpoint --id <id> --file
+   <caminho>`) e diga ao usuário o caminho e o comando para retomar.
+3. O lead que retoma, em qualquer CLI, roda `use "<pasta>"`, lê o `LEAD-HANDOFF.md` e o `status`,
+   e trata o arquivo como alegação: confere diffs e checks antes de seguir. Se for trocar de
+   família, pergunta ao usuário como acima.
 
 ## Mudar o rumo
 
@@ -346,6 +376,19 @@ Registre cada mudança em uma linha antes da próxima onda, para o relatório ex
 
 Uma onda freeform é um plano comum: deixe `playbook` de fora e dê à `phase` o nome do que a onda
 faz. Pare uma onda que deixou de ser útil com `stop`; workers que já rodaram mantêm os resultados.
+
+### Limite de tentativas
+
+Uma unidade que falhou 3 vezes na mesma orquestração não sobe de novo: `run` recusa a onda e
+diz quais ondas falharam. Conta como a mesma unidade o mesmo `id` ou o mesmo brief (espaços à
+parte), então trocar o nome do worker ou o texto não zera a conta. Contam só falhas da própria
+unidade (`failed` ou `timed_out`); parada a pedido, orçamento, cota e limite de uso do provedor
+não contam, e um worker que roda até o fim e responde `BLOCKED` também não.
+
+Antes de repetir uma unidade que falhou, mude a causa (contexto, tier, provedor ou escopo):
+repetir a mesma coisa falha do mesmo jeito. Ao bater no limite, relate a falha ao usuário. Só
+quando ele pedir explicitamente uma nova tentativa, rode com `--reopen <id do worker>`; isso vale
+para aquela onda, e a próxima falha volta a ser barrada.
 
 ## Orquestrar
 

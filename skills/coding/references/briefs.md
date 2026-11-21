@@ -23,9 +23,12 @@ In this order:
 1. One line on where the unit fits in the whole task.
 2. The task goal and the definition of done, written as checks that pass or fail.
 3. The paths it owns, and what it must leave untouched.
-4. Interfaces and decisions from earlier waves that it cannot discover by itself.
-5. How you resolved any ambiguity you noticed in the request.
-6. The checks to run, with their exact commands.
+4. The shared resources its checks hold (a port, a test database, a build folder), mirrored in the
+   worker's `resources` so units that share one take turns.
+5. Interfaces and decisions from earlier waves that it cannot discover by itself.
+6. How you resolved any ambiguity you noticed in the request.
+7. The checks to run, with their exact commands. For a Claude writer, list the same prefixes in
+   the worker's `allowCommands`; without them its shell commands are denied.
 
 A brief describes one unit, not the session's history. Point to files instead of pasting them.
 

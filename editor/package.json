@@ -1,0 +1,30 @@
+{
+  "name": "coding-opus-editor",
+  "private": true,
+  "description": "Source of the Coding Opus playbooks editor; `npm run build` writes skills/coding/assets/editor.html.",
+  "type": "module",
+  "scripts": {
+    "build": "vite build --config config/playbooks-editor/vite.config.mjs",
+    "test": "vitest run --config vitest.config.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@radix-ui/react-focus-scope": "1.1.12",
+    "lucide-react": "^0.577.0",
+    "react": "~19.2.8",
+    "react-dom": "~19.2.8",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^24.19.2",
+    "@types/react": "~19.2.18",
+    "@types/react-dom": "~19.2.7",
+    "@vitejs/plugin-react": "^6.1.2",
+    "happy-dom": "^21.0.4",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "5.0.5"
+  }
+}

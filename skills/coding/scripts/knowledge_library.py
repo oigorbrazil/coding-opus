@@ -3,6 +3,7 @@
 import argparse
 from collections import Counter
 from datetime import datetime, timezone
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -12,7 +13,9 @@ import sys
 import threading
 
 import brain
-from chat_memory import ChatMemory
+from chat_memory import AUTOMATIC_TITLE, CONVERSATION_POSITIONS, DISPLAY_TITLE, ChatMemory, atomic_text, conversation_parts, saved_checkpoints
+from reminder_store import reminders
+from second_brain_review import review_transaction, snapshot
 
 
 PAGE_SIZE = 24
@@ -101,6 +104,55 @@ def note_paths(root, folders):
             yield "", path
 
 
+def review_notes(root):
+    for section, path in note_paths(root, folder_names(root)):
+        value = note_summary(root, path)
+        if value is not None:
+            yield section, *value
+
+
+def note_detail(path, identity):
+    original = path.read_bytes()
+    meta, text = brain.split_frontmatter(original.decode("utf-8-sig"))
+    source = re.search(r"\[\[memory/sessions/([a-f0-9]{24})/context\|Conversa de origem\]\]", text)
+    return {"id": identity, "title": str(meta.get("title") or path.stem), "text": text,
+            "sourceConversation": source[1] if source else None,
+            "revision": hashlib.sha256(original).hexdigest()}
+
+
+def update_note(path, identity, request):
+    if path.name in brain.SKIP_FILES:
+        raise brain.BrainError("Este arquivo não faz parte das notas para revisão.")
+    original = path.read_bytes()
+    if request.get("revision") != hashlib.sha256(original).hexdigest():
+        raise brain.BrainError("A nota mudou fora do editor. Abra a versão atual para revisar.")
+    source = original.decode("utf-8-sig")
+    frontmatter = re.match(r"\A(---[ \t]*\r?\n)(.*?)(^---[ \t]*(?:\r?\n|\Z))", source, re.M | re.S)
+    text = request.get("text")
+    if text is not None and (not isinstance(text, str) or len(text) > 40000):
+        raise brain.BrainError("Use até 40.000 caracteres no conteúdo da nota.")
+    newline = "\r\n" if "\r\n" in source else "\n"
+    body = source[frontmatter.end():] if frontmatter else source
+    if text is not None:
+        body = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", newline)
+        if body and not body.endswith(newline):
+            body += newline
+    prefix = ""
+    if frontmatter:
+        updated = f"updated: {datetime.now(timezone.utc).date().isoformat()}"
+        header, replaced = re.subn(r"^updated:[^\r\n]*", updated, frontmatter[2], flags=re.M | re.I)
+        if not replaced:
+            header += updated + newline
+        prefix = frontmatter[1] + header + frontmatter[3]
+        if body and not prefix.endswith(newline):
+            prefix += newline
+    bom = "\ufeff" if original.startswith(b"\xef\xbb\xbf") else ""
+    if path.read_bytes() != original:
+        raise brain.BrainError("A nota mudou durante a revisão. Abra a versão atual antes de salvar.")
+    atomic_text(path, bom + prefix + body)
+    return note_detail(path, identity)
+
+
 def note_index(root, group, query, page):
     groups = folder_names(root)
     counts = Counter()
@@ -127,38 +179,85 @@ def note_index(root, group, query, page):
 
 def conversation_index(memory, group, query, page):
     with memory.connect() as db:
-        groups = db.execute("""SELECT project_key(project) AS id, project, count(*) AS count
-            FROM sessions GROUP BY project_key(project) ORDER BY project COLLATE NOCASE""").fetchall()
-        where = """(? = '' OR project_key(s.project) = ?) AND
-            (? = '' OR instr(lower(s.title || ' ' || s.summary || ' ' || s.agent), lower(?)) > 0
+        groups = db.execute("""SELECT scope AS id, min(project) AS project, count(*) AS count
+            FROM (SELECT project_key(project) AS scope, min(project) AS project
+                  FROM sessions GROUP BY scope,agent,source_session)
+            GROUP BY scope ORDER BY project COLLATE NOCASE""").fetchall()
+        where = f"""(? = '' OR project_key(s.project) = ?) AND
+            (? = '' OR instr(lower(({DISPLAY_TITLE}) || ' ' || ({AUTOMATIC_TITLE}) || ' ' || s.summary || ' ' || s.agent), lower(?)) > 0
              OR EXISTS (SELECT 1 FROM messages m WHERE m.session_id=s.id AND instr(lower(m.content), lower(?)) > 0))"""
         params = (group, "" if group == "@general" else group, query, query, query)
-        total = db.execute("SELECT count(*) FROM sessions s WHERE " + where, params).fetchone()[0]
-        rows = db.execute("""SELECT s.id,s.title,s.agent,s.updated,s.project AS path,project_key(s.project) AS scope,
-            (SELECT count(*) FROM messages m WHERE m.session_id=s.id) AS messages
-            FROM sessions s WHERE """ + where + " ORDER BY s.updated DESC LIMIT ? OFFSET ?",
+        matched = f"""WITH matched AS (
+            SELECT s.*, ROW_NUMBER() OVER (PARTITION BY s.agent,s.source_session ORDER BY s.updated DESC,s.id) AS rank
+            FROM sessions s WHERE {where})"""
+        total = db.execute(matched + " SELECT count(*) FROM matched WHERE rank=1", params).fetchone()[0]
+        count = db.execute("SELECT count(*) FROM (SELECT 1 FROM sessions GROUP BY agent,source_session)").fetchone()[0]
+        rows = db.execute(matched + f""" SELECT s.id,{DISPLAY_TITLE} AS title,s.agent,result.updated,
+            result.project AS path,project_key(result.project) AS scope,
+            (SELECT count(DISTINCT m.event_id) FROM messages m JOIN sessions part ON m.session_id=part.id
+                WHERE part.agent=s.agent AND part.source_session=s.source_session) AS messages
+            FROM matched result JOIN sessions s ON s.id=(
+                SELECT origin.id FROM sessions origin WHERE origin.agent=result.agent
+                AND origin.source_session=result.source_session ORDER BY origin.created,origin.id LIMIT 1)
+            WHERE result.rank=1 ORDER BY result.updated DESC,s.id LIMIT ? OFFSET ?""",
             (*params, PAGE_SIZE, page * PAGE_SIZE)).fetchall()
     return {
         "groups": [{"id": group_row["id"] or "@general", "label": Path(group_row["project"]).name or "Geral",
                     "count": group_row["count"], "path": group_row["project"]} for group_row in groups],
-        "count": sum(row["count"] for row in groups), "total": total,
+        "count": count, "total": total,
         "entries": [{**dict(row), "group": Path(row["path"]).name or "Geral"} for row in rows],
     }
 
 
+def conversation_links(db, parts):
+    agent, source = parts[0]["agent"], parts[0]["source_session"]
+    children = db.execute("""SELECT s.id FROM sessions s JOIN sessions origin ON origin.id=s.parent
+        WHERE origin.agent=? AND origin.source_session=? ORDER BY s.updated DESC""", (agent, source))
+    result = {}
+    for key, ids in (("previous", [row["parent"] for row in parts if row["parent"]]),
+                     ("continuations", [row["id"] for row in children])):
+        refs = {}
+        for identity in dict.fromkeys(ids):
+            linked = conversation_parts(db, identity)
+            if not linked or (linked[0]["agent"], linked[0]["source_session"]) == (agent, source):
+                continue
+            ref = linked[0]
+            refs[ref["id"]] = {"id": ref["id"], "title": ref["display_title"], "agent": ref["agent"]}
+        result[key] = list(refs.values())
+    return result
+
+
 def conversation(memory, identity, page):
     with memory.connect() as db:
-        record = db.execute("""SELECT id,title,agent,project,updated,summary,next_step,
-            (SELECT count(*) FROM messages WHERE session_id=s.id) AS count
-            FROM sessions s WHERE id=?""", (identity,)).fetchone()
-        if not record:
+        parts = conversation_parts(db, identity)
+        if not parts:
             raise brain.BrainError("Conversa não encontrada.")
-        messages = db.execute("""SELECT position,role,content,timestamp FROM (
-            SELECT position,role,content,timestamp FROM messages WHERE session_id=?
-            ORDER BY position DESC LIMIT ? OFFSET ?) ORDER BY position""",
-            (identity, MESSAGE_PAGE, page * MESSAGE_PAGE)).fetchall()
-    return {**dict(record), "messages": [dict(row) for row in messages],
-            "hasOlder": (page + 1) * MESSAGE_PAGE < record["count"]}
+        first = parts[0]
+        latest = max(parts, key=lambda row: (row["updated"], row["id"]))
+        scope = (first["agent"], first["source_session"])
+        count, newest = db.execute(
+            f"SELECT count(*),coalesce(max(position),0) FROM ({CONVERSATION_POSITIONS})", scope
+        ).fetchone()
+        messages = db.execute(f"""SELECT * FROM (
+            SELECT m.position,m.role,m.content,m.timestamp,s.project FROM messages m JOIN sessions s ON s.id=m.session_id
+            WHERE m.position IN ({CONVERSATION_POSITIONS}) ORDER BY m.position DESC LIMIT ? OFFSET ?) ORDER BY position""",
+            (*scope, MESSAGE_PAGE, page * MESSAGE_PAGE)).fetchall()
+        history = saved_checkpoints(db, identity)
+        summary = max((row for row in parts if row["summary"] or row["next_step"]),
+                      key=lambda row: row["updated"], default=latest)
+        checkpoint = history[0] if history else None
+        links = conversation_links(db, parts)
+    return {"id": first["id"], "title": first["display_title"], "customTitle": first["custom_title"],
+            "agent": first["agent"], "project": latest["project"],
+            "projects": list(dict.fromkeys(row["project"] for row in parts if row["project"])),
+            "updated": latest["updated"], "state": latest["state"],
+            "summary": checkpoint["summary"] if checkpoint else summary["summary"],
+            "next_step": checkpoint["next_step"] if checkpoint else summary["next_step"],
+            "checkpoint": checkpoint, "checkpointHistory": history[1:],
+            "checkpointStale": newest > (checkpoint["through_position"] if checkpoint else 0)
+                and (checkpoint is not None or bool(summary["summary"] or summary["next_step"])),
+            **links, "count": count, "messages": [dict(row) for row in messages],
+            "hasOlder": (page + 1) * MESSAGE_PAGE < count}
 
 
 def reveal(folder):
@@ -173,8 +272,9 @@ def reveal(folder):
 
 
 class KnowledgeLibrary:
-    def __init__(self):
+    def __init__(self, policy_path=None):
         self.write_lock = threading.Lock()
+        self.review_database = policy_path.parent / "second-brain-review.sqlite3" if policy_path else None
 
     def action(self, request):
         try:
@@ -184,7 +284,9 @@ class KnowledgeLibrary:
 
     def _action(self, request):
         kind, action = request.get("kind"), request.get("action")
-        if kind not in ("notes", "memory"):
+        if kind == "reminders" and self.review_database is not None:
+            return reminders(self.review_database, request)
+        if kind not in ("notes", "memory", "review"):
             raise brain.BrainError("Área desconhecida.")
         page = request.get("page", 0)
         if type(page) is not int or not 0 <= page <= 1000:
@@ -194,6 +296,10 @@ class KnowledgeLibrary:
             raise brain.BrainError("O Second Brain usa um caminho redirecionado.")
         root = root.resolve()
         exists = root.is_dir()
+        if kind == "review" and self.review_database is not None and action in ("status", "run"):
+            return snapshot(self.review_database, root, review_notes(root), force=action == "run")
+        if kind == "review":
+            raise brain.BrainError("A revisão não está disponível.")
         memory = ChatMemory(root)
         directory = root if kind == "notes" else memory.root
         enabled = kind == "notes" or (exists and not redirected(directory) and memory.enabled() and
@@ -216,11 +322,30 @@ class KnowledgeLibrary:
         if action == "read":
             if kind == "memory":
                 return conversation(memory, identity, page)
-            path = relative_note(root, identity)
-            meta, text = brain.split_frontmatter(path.read_text(encoding="utf-8-sig"))
-            return {"id": identity, "title": str(meta.get("title") or path.stem), "text": text}
+            return note_detail(relative_note(root, identity), identity)
+        if kind == "memory" and action == "rename" and "title" in request:
+            memory.rename(identity, request["title"])
+            return conversation(memory, identity, 0)
+        if kind == "memory" and action == "delete":
+            if request.get("confirm") is not True or not re.fullmatch(r"[0-9a-f]{24}", identity):
+                raise brain.BrainError("Confirme a exclusão da conversa na Memória.")
+            memory.delete_conversation(identity)
+            return None
+        if kind == "memory" and action == "checkpoint":
+            summary, next_step = request.get("summary", ""), request.get("next_step", "")
+            expected = request.get("through_position")
+            if (not isinstance(summary, str) or not isinstance(next_step, str)
+                    or len(summary) > 8000 or len(next_step) > 4000 or type(expected) is not int or expected < 0):
+                raise brain.BrainError("Resumo ou próximo passo inválido.")
+            current = conversation(memory, identity, 0)
+            memory.checkpoint(identity, summary.strip(), next_step.strip(), current["state"],
+                              details=request.get("details"), expected_position=expected)
+            return conversation(memory, identity, 0)
         if kind == "notes" and action == "record":
             return self._record(root, request)
+        if kind == "notes" and action == "update" and self.review_database is not None:
+            with review_transaction(self.review_database):
+                return update_note(relative_note(root, identity), identity, request)
         raise brain.BrainError("Ação desconhecida.")
 
     def _record(self, root, request):
@@ -233,8 +358,17 @@ class KnowledgeLibrary:
             raise brain.BrainError("Informe um título e tipo válidos.")
         if section not in folder_names(root) or len(text) > 40000:
             raise brain.BrainError("Escolha uma seção válida e use até 40.000 caracteres.")
+        related = []
+        origin = request.get("sourceConversation")
+        if origin:
+            memory = ChatMemory(root)
+            with memory.connect() as db:
+                parts = conversation_parts(db, origin)
+            if not parts:
+                raise brain.BrainError("Conversa de origem não encontrada.")
+            related = [f"memory/sessions/{parts[0]['id']}/context|Conversa de origem"]
         args = argparse.Namespace(brain=str(root), folder=section, title=title, type=kind, area=brain.route_key(section),
-                                  summary=text, no_report=True, orchestration=None, related=[], write=True,
+                                  summary=text, no_report=True, orchestration=None, related=related, write=True,
                                   tag=[tag.strip()[:80] for tag in tags[:20] if tag.strip()])
         with self.write_lock:
             note, _ = brain.record_note(args)

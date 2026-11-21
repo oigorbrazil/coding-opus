@@ -1,0 +1,97 @@
+import type {
+  CodingOpusAccountProvider,
+  CodingOpusAccountAction,
+  CodingOpusAccountManagerResult,
+  CodingOpusAccountsResult,
+  CodingOpusCommandResult,
+  CodingOpusGeneratedPlaybook,
+  CodingOpusGenerationRequest,
+  CodingOpusModelCatalogResult,
+  CodingOpusPlaybooks,
+  CodingOpusPlaybooksSaveResult,
+  CodingOpusUsageSnapshot
+} from '../../src/shared/coding-opus'
+import type { LibraryKind } from './knowledge-model'
+
+// The page is served by `orchestrate.py editor` on 127.0.0.1 with a one-time token in the hash.
+const token = new URLSearchParams(window.location.hash.slice(1)).get('token') ?? ''
+
+async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', 'X-Coding-Opus-Token': token }
+  })
+  // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: the skill's local editor server answers with this JSON shape.
+  const body = (await response.json()) as T & { error?: string }
+  if (!response.ok) {
+    throw new Error(body.error ?? `HTTP ${response.status}`)
+  }
+  return body
+}
+
+export async function libraryCall<T>(
+  request: { kind: LibraryKind | 'review' | 'reminders'; action: string; [key: string]: unknown },
+  signal?: AbortSignal
+): Promise<T> {
+  const result = await call<CodingOpusCommandResult<T>>('/api/library', {
+    method: 'POST',
+    body: JSON.stringify(request),
+    signal
+  })
+  if (!result.ok) {
+    throw new Error(result.error)
+  }
+  return result.value
+}
+
+export const readEditorPlaybooks = (signal = AbortSignal.timeout(15000)) =>
+  call<CodingOpusPlaybooks>('/api/playbooks', { signal })
+
+/** The `window.api.codingOpus` surface the editor reads, served by the skill's local server. */
+export function createCodingOpusApi() {
+  return {
+    readPlaybooks: readEditorPlaybooks,
+    savePlaybooks: (text: string) =>
+      call<CodingOpusPlaybooksSaveResult>('/api/playbooks', {
+        method: 'POST',
+        body: JSON.stringify({ text })
+      }).catch((error: unknown): CodingOpusPlaybooksSaveResult => ({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      })),
+    playbooksStamp: () => call<{ stamp: number }>('/api/stamp').then((body) => body.stamp),
+    modelCatalog: () =>
+      call<CodingOpusModelCatalogResult>('/api/models').catch(
+        (error: unknown): CodingOpusModelCatalogResult => ({ ok: false, error: String(error) })
+      ),
+    readAccounts: () =>
+      call<CodingOpusAccountsResult>('/api/accounts').catch(
+        (error: unknown): CodingOpusAccountsResult => ({ ok: false, error: String(error) })
+      ),
+    manageAccounts: (request: CodingOpusAccountAction) =>
+      call<CodingOpusAccountManagerResult>('/api/accounts/manage', {
+        method: 'POST',
+        body: JSON.stringify(request)
+      }),
+    readUsage: () => call<CodingOpusCommandResult<CodingOpusUsageSnapshot>>('/api/usage'),
+    generatePlaybook: (request: CodingOpusGenerationRequest) =>
+      call<CodingOpusCommandResult<CodingOpusGeneratedPlaybook>>('/api/playbooks/generate', {
+        method: 'POST',
+        body: JSON.stringify(request)
+      }),
+    orderAccounts: (provider: CodingOpusAccountProvider, names: string[]) =>
+      call<CodingOpusAccountsResult>('/api/accounts/order', {
+        method: 'POST',
+        body: JSON.stringify({ provider, names })
+      }).catch((error: unknown): CodingOpusAccountsResult => ({ ok: false, error: String(error) }))
+  }
+}
+
+export type CodingOpusApi = ReturnType<typeof createCodingOpusApi>
+
+/** Gives the editor its `window.api.codingOpus`, backed by the skill's local server. */
+export function installSkillServerApi(): void {
+  window.api = { codingOpus: createCodingOpusApi() }
+  // Tell the server the page is still open; it shuts down a while after the last ping.
+  window.setInterval(() => void call('/api/ping').catch(() => undefined), 20_000)
+}

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import codecs
 import concurrent.futures
+import contextlib
 import copy
 import datetime as dt
 import functools
@@ -25,7 +26,7 @@ import time
 import unicodedata
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 
 PLAN_VERSION = 1
@@ -34,6 +35,12 @@ POLICY_VERSION = 1
 MAX_WORKERS = 16
 DEFAULT_TIMEOUT_SECONDS = 1200
 ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+RESOURCE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._:/@-]{0,63}$")
+MAX_RESOURCES = 16
+# A command prefix a Claude writer may run without a prompt. No wildcards, quotes, pipes,
+# redirections, substitutions or separators: the prefix is matched literally by the CLI.
+ALLOW_COMMAND_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._/\\:=@+~-]{0,199}$")
+MAX_ALLOW_COMMANDS = 16
 SAFE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 NOTE_LIMITS = {"title": 120, "why": 500, "workerWhy": 300, "note": 300}
 WORKTREE_EXCLUDE = "/.coding-opus/worktrees/"
@@ -211,6 +218,11 @@ SNAPSHOT_LIMIT = 5000
 MAX_LISTED_PATHS = 50
 NESTED_AGENT_FEATURES = ("multi_agent", "multi_agent_v2")
 CLAUDE_AGENT_TOOLS = "Agent,Workflow"
+# After this many failed attempts at one unit inside an orchestration, only the user may reopen it.
+BREAKER_ATTEMPTS = 3
+BREAKER_STATUSES = ("failed", "timed_out")
+# Not the unit's fault: the user stopped it, a budget or quota held it, or the provider hit its limit.
+BREAKER_EXCUSED = ("stopped", "budget", "budget_exceeded", "rate_limited", "quota_low")
 WORKER_STATUSES = ("DONE", "DONE_WITH_CONCERNS", "BLOCKED", "NEEDS_CONTEXT")
 VERDICTS = ("PASS", "FAIL", "NOT_PROVEN")
 MARKS = ("used", "partial", "discarded")
@@ -321,6 +333,7 @@ GUIDE_PHASES = {
     "playbooks": "playbooks.md", "briefs": "briefs.md", "providers": "providers.md",
     "routing": "routing.md", "operations": "operations.md", "onboarding": "onboarding.md",
     "manual": "manual.md", "diagram": "diagram.md", "handoff": "handoff.md",
+    "eval": "harness-eval.md",
 }
 
 
@@ -447,7 +460,8 @@ PLAYBOOK_PHASE_FIELDS = {
     "id", "role", "who", "tier", "provider", "model", "effort", "readOnly", "workers", "isolate",
     "runner", "does", "returns", "limit", "gate", "if", "with", "after", "then", "rules",
 }
-PLAYBOOK_FIELDS = {"name", "goal", "pickWhen", "saves", "avoidWhen", "source", "next", "phases"}
+PLAYBOOK_FIELDS = {"name", "family", "goal", "pickWhen", "saves", "avoidWhen", "source", "next", "phases"}
+PLAYBOOK_FAMILIES = ("claude", "other")
 PLAYBOOK_PROFILE_FIELDS = {"name", "summary", "order", "quota", "tiers"}
 PLAYBOOK_PHASE_ENUMS = {
     "who": ("lead", "worker"), "tier": MODEL_TIERS,
@@ -866,6 +880,8 @@ def playbook_structure_errors(data: Any) -> List[str]:
             for field in PLAYBOOK_FIELDS - {"phases"}:
                 if field in book and (not isinstance(book[field], str) or not book[field]):
                     problem(book, field, f"{label}.{field}", "must be a non-empty string")
+            if "family" in book and book["family"] not in PLAYBOOK_FAMILIES:
+                problem(book, "family", f"{label}.family", "must be claude or other")
             phases = book.get("phases")
             if not isinstance(phases, list):
                 problem(book, "phases", f"{label}.phases", "must be a list")
@@ -892,6 +908,13 @@ def playbook_structure_errors(data: Any) -> List[str]:
                     problem(phase, "workers", f"{where}.workers", f"must be an integer between 1 and {MAX_WORKERS}")
                 if "provider" in phase and phase["provider"] not in [*providers, "auto"]:
                     problem(phase, "provider", f"{where}.provider", "must be auto or an id from providers")
+                family = book.get("family")
+                default_provider = "claude" if family == "claude" else "auto"
+                pinned = phase.get("provider") or default_provider
+                if pinned == "auto":
+                    pinned = default_provider
+                if phase.get("who") != "lead" and not family_allows(family, pinned, phase.get("model")):
+                    problem(phase, "provider", f"{where}.provider", f"must use the {family} family")
                 for field in ("model", "effort"):
                     if field in phase:
                         named(phase[field], phase, field, f"{where}.{field}")
@@ -908,6 +931,9 @@ def playbook_structure_errors(data: Any) -> List[str]:
                         continue
                     if "tier" in use and use["tier"] not in MODEL_TIERS:
                         problem(use, "tier", f"{where}.rules.use.tier", f"must be one of {', '.join(MODEL_TIERS)}")
+                    rule_provider = use.get("provider") or pinned
+                    if phase.get("who") != "lead" and not family_allows(family, rule_provider, use.get("model")):
+                        problem(use, "provider", f"{where}.rules.use.provider", f"must use the {family} family")
                     for field in ("model", "effort"):
                         if field in use:
                             named(use[field], use, field, f"{where}.rules.use.{field}")
@@ -1001,11 +1027,22 @@ def selected_playbook_block(text: str, parsed: Dict[str, Any], book_id: str) -> 
     return "\n".join(lines[start:end]).rstrip()
 
 
+def refuse_bare_playbook(books: Dict[str, Any], book_id: Optional[str], where: str) -> None:
+    """A strategy split by provider family must be named with its family, never by its bare name."""
+    if not book_id or book_id in books:
+        return
+    variants = [f"{book_id}-{family}" for family in PLAYBOOK_FAMILIES if f"{book_id}-{family}" in books]
+    if variants:
+        raise PlanError(f"{where}: {book_id} has one playbook per provider family; name it as "
+                        f"{' or '.join(variants)} (-claude runs workers on Claude, -other on GPT and other AIs)")
+
+
 def playbook_output(policy_path: Path, book_id: Optional[str], pick: bool, as_json: bool) -> str:
     text, parsed = loaded_playbooks(policy_path)
     settings = playbook_settings(policy_path)
     if book_id and pick:
         raise PlanError("pass a playbook id or --pick, not both")
+    refuse_bare_playbook(parsed["playbooks"], book_id, "playbook")
     if book_id and book_id not in parsed["playbooks"]:
         raise PlanError(f"unknown playbook {book_id}; choose from {', '.join(parsed['playbooks'])}")
     if pick:
@@ -1013,7 +1050,8 @@ def playbook_output(policy_path: Path, book_id: Optional[str], pick: bool, as_js
             "profile": settings["profile"], "providers": settings["providers"],
             "pickOrder": settings.get("pickOrder", []),
             "playbooks": [
-                {"id": key, "name": book.get("name", key), "pickWhen": book.get("pickWhen", "")}
+                {"id": key, "name": book.get("name", key), "pickWhen": book.get("pickWhen", ""),
+                 **({"family": book["family"]} if "family" in book else {})}
                 for key, book in settings["playbooks"].items()
             ],
         }
@@ -1021,7 +1059,8 @@ def playbook_output(policy_path: Path, book_id: Optional[str], pick: bool, as_js
             return json.dumps(payload, indent=2, ensure_ascii=False)
         lines = [f"profile: {payload['profile']}", f"providers: {', '.join(payload['providers'])}"]
         lines.extend(f"pick {index}: {item['when']} -> {item['playbook']}" for index, item in enumerate(payload["pickOrder"], 1))
-        lines.extend(f"{item['id']} | {item['name']} | {item['pickWhen']}" for item in payload["playbooks"])
+        lines.extend(f"{item['id']} | {item['name']} | {item.get('family', 'any')} | {item['pickWhen']}"
+                     for item in payload["playbooks"])
         return "\n".join(lines)
     if not book_id:
         if as_json:
@@ -1244,9 +1283,6 @@ def codex_quota(
 
 
 ACCOUNTS_FILE = "coding-opus-accounts.json"
-# Coding Agent 2 publishes its managed accounts in files with this prefix (coding-opus-accounts-export.ts).
-LINKED_ACCOUNTS_PREFIX = "coding-agent-accounts"
-CODING_AGENT_CLIS = ("coding-agent", "coding", "orca")
 DEFAULT_ACCOUNT = "default"
 ACCOUNT_NAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 # Each account is its own CLI home: the CLI keeps that account's login, sessions and quota there.
@@ -1287,15 +1323,8 @@ def account_provider(provider: Any) -> str:
     return provider
 
 
-def same_path(left: Path, right: Path) -> bool:
-    try:
-        return os.path.normcase(str(left.resolve())) == os.path.normcase(str(right.resolve()))
-    except OSError:
-        return os.path.normcase(str(left)) == os.path.normcase(str(right))
-
-
 def load_accounts(policy_path: Path) -> Dict[str, Any]:
-    """Accounts Coding Opus made itself; Coding Agent 2's come from linked_accounts."""
+    """Read Coding Opus account profiles and rotation order."""
     path = accounts_path(policy_path)
     empty = {"providers": {provider: [] for provider in ACCOUNT_PROVIDERS}, "order": {}}
     if not path.exists():
@@ -1319,10 +1348,13 @@ def load_accounts(policy_path: Path) -> Dict[str, Any]:
             data["providers"][provider].append({"name": name, "home": entry["home"], "addedAt": entry.get("addedAt")})
     for provider, names in raw.get("order", {}).items():
         account_provider(provider)
-        # Names are checked against the live list when used: a Coding Agent 2 account may come and go.
         if not isinstance(names, list) or not names or len(set(names)) != len(names):
             raise PlanError(f"{path}: order.{provider} must list accounts once each")
-        data["order"][provider] = [validate_account_name(name, f"{path}: order.{provider}") for name in names]
+        known = {DEFAULT_ACCOUNT, *(entry["name"] for entry in data["providers"][provider])}
+        validated = [validate_account_name(name, f"{path}: order.{provider}") for name in names]
+        order = [name for name in validated if name in known]
+        if order:
+            data["order"][provider] = order
     return data
 
 
@@ -1330,80 +1362,25 @@ def save_accounts(policy_path: Path, data: Dict[str, Any]) -> None:
     atomic_write_json(accounts_path(policy_path), {"version": 1, "providers": data["providers"], "order": data["order"]})
 
 
-def linked_account_files(policy_path: Path) -> List[Path]:
-    return sorted(policy_path.parent.glob(f"{LINKED_ACCOUNTS_PREFIX}*.json"))
-
-
-def email_account_name(email: str, taken: set, account_id: str) -> str:
-    base = re.sub(r"[^a-z0-9]+", "-", email.lower()).strip("-_")[:32].rstrip("-_") or "account"
-    if not ACCOUNT_NAME_PATTERN.fullmatch(base):
-        base = "account"
-    name = base
-    if name in taken or name == DEFAULT_ACCOUNT:
-        suffix = "-" + (re.sub(r"[^a-z0-9]", "", account_id.lower())[:6] or uuid.uuid4().hex[:6])
-        name = base[:32 - len(suffix)].rstrip("-_") + suffix
-    return name
-
-
-def linked_accounts(policy_path: Path, taken: Optional[Dict[str, set]] = None) -> Dict[str, List[Dict[str, Any]]]:
-    """Accounts Coding Agent 2 manages, read from the files it publishes; never their credentials."""
-    result: Dict[str, List[Dict[str, Any]]] = {provider: [] for provider in ACCOUNT_PROVIDERS}
-    names = {provider: set((taken or {}).get(provider, set())) for provider in ACCOUNT_PROVIDERS}
-    homes: List[Path] = []
-    for path in linked_account_files(policy_path):
-        try:
-            raw = read_json(path)
-        except PlanError:
-            continue
-        if not isinstance(raw, dict) or raw.get("version") != 1 or not isinstance(raw.get("providers"), dict):
-            continue
-        active = raw.get("active") if isinstance(raw.get("active"), dict) else {}
-        for provider in ACCOUNT_PROVIDERS:
-            entries = raw["providers"].get(provider)
-            for entry in entries if isinstance(entries, list) else []:
-                if not isinstance(entry, dict) or not all(
-                        isinstance(entry.get(field), str) and entry[field] for field in ("id", "email", "home")):
-                    continue
-                home = Path(entry["home"])
-                if not home.is_absolute() or any(same_path(home, seen) for seen in homes):
-                    continue
-                homes.append(home)
-                name = email_account_name(entry["email"], names[provider], entry["id"])
-                names[provider].add(name)
-                result[provider].append({
-                    "name": name, "home": str(home), "linked": True, "id": entry["id"], "email": entry["email"],
-                    "label": entry.get("label") if isinstance(entry.get("label"), str) else None,
-                    "active": active.get(provider) == entry["id"],
-                    # Coding Agent 2 prepares a Claude account's folder the first time the account is used there.
-                    "available": home.is_dir(), "source": str(path),
-                })
-    return result
-
-
 def account_entries(policy_path: Path, provider: str) -> List[Dict[str, Any]]:
-    """Named accounts, local first, then Coding Agent 2's; the default account is not listed."""
-    local = [{**entry, "linked": False, "available": True}
-             for entry in load_accounts(policy_path)["providers"].get(provider, [])]
-    taken = {provider: {entry["name"] for entry in local}}
-    linked = [entry for entry in linked_accounts(policy_path, taken)[provider]
-              if not same_path(Path(entry["home"]), default_account_home(provider))]
-    return [*local, *linked]
+    """List named Coding Opus accounts."""
+    return [{**entry, "linked": False, "available": True}
+            for entry in load_accounts(policy_path)["providers"].get(provider, [])]
 
 
 def account_rotation(policy_path: Path, provider: str) -> List[str]:
     """Accounts in the order workers try them; empty when the provider has no named account."""
     if provider not in ACCOUNT_PROVIDERS:
         return []
-    names = [entry["name"] for entry in account_entries(policy_path, provider) if entry["available"]]
+    data = load_accounts(policy_path)
+    names = [entry["name"] for entry in data["providers"][provider]]
     if not names:
         return []
-    order = [name for name in load_accounts(policy_path)["order"].get(provider, [])
-             if name == DEFAULT_ACCOUNT or name in names]
+    order = data["order"].get(provider, [])
     if order:
         # An account left out of a saved order still runs, after the ordered ones.
         return [*order, *(name for name in names if name not in order)]
-    linked = {entry["name"] for entry in account_entries(policy_path, provider) if entry.get("linked")}
-    return [DEFAULT_ACCOUNT, *(name for name in names if name in linked), *(name for name in names if name not in linked)]
+    return [DEFAULT_ACCOUNT, *names]
 
 
 def account_home(policy_path: Path, provider: str, name: str) -> Optional[Path]:
@@ -1412,8 +1389,6 @@ def account_home(policy_path: Path, provider: str, name: str) -> Optional[Path]:
         return None
     for entry in account_entries(policy_path, provider):
         if entry["name"] == name:
-            if not entry["available"]:
-                raise PlanError(f"{provider} account {name} is not ready yet; use it once in Coding Agent 2 first")
             return Path(entry["home"])
     raise PlanError(f"{provider} has no account {name}; add it with: orchestrate.py account add {provider}")
 
@@ -1429,39 +1404,16 @@ def account_environment(provider: str, home: Optional[Path]) -> Dict[str, str]:
     return environment
 
 
-def coding_agent_cli() -> Optional[List[str]]:
-    for name in CODING_AGENT_CLIS:
-        found = shutil.which(name)
-        if found:
-            return launch_command(found)
-    return None
-
-
 def run_account_login(policy_path: Path, provider: str, name: str) -> int:
     provider = account_provider(provider)
     entry = next((item for item in account_entries(policy_path, provider) if item["name"] == name), None)
     if entry is None:
         raise PlanError(f"{provider} has no account {name}")
-    if entry.get("linked"):
-        raise PlanError(f"{name} belongs to Coding Agent 2; sign in again there (Settings > AI Provider Accounts)")
     home = Path(entry["home"])
     home.mkdir(parents=True, exist_ok=True)
     args = [*launch_command(resolve_executable(provider)), *ACCOUNT_PROVIDERS[provider]["login"]]
     # The login is interactive: it inherits this terminal and stores its credentials only in the account home.
     return subprocess.run(args, env=account_environment(provider, home), check=False).returncode
-
-
-def add_account_in_coding_agent(provider: str) -> int:
-    """With Coding Agent 2 installed, it owns the accounts: its CLI signs in and registers the account, and the
-    account reaches Coding Opus through the file Coding Agent 2 publishes."""
-    cli = coding_agent_cli()
-    if cli is None:
-        raise PlanError("Coding Agent 2 manages the accounts on this machine, but its CLI is not on PATH; add the "
-                        "account in Coding Agent 2 (Settings > AI Provider Accounts), or pass --local to keep it "
-                        "only in Coding Opus")
-    return subprocess.run([*cli, "account", "add", "--agent", provider],
-                          env={key: value for key, value in os.environ.items() if key != "CLAUDECODE"},
-                          check=False).returncode
 
 
 def add_account(policy_path: Path, provider: str, name: str) -> Dict[str, Any]:
@@ -1470,7 +1422,7 @@ def add_account(policy_path: Path, provider: str, name: str) -> Dict[str, Any]:
     if name == DEFAULT_ACCOUNT:
         raise PlanError(f"{DEFAULT_ACCOUNT} is the account the {provider} CLI already uses; pick another name")
     data = load_accounts(policy_path)
-    if any(entry["name"] == name for entry in account_entries(policy_path, provider)):
+    if any(entry["name"] == name for entry in data["providers"][provider]):
         raise PlanError(f"{provider} already has an account named {name}")
     home = accounts_root(policy_path) / provider / name
     home.mkdir(parents=True, exist_ok=True)
@@ -1494,9 +1446,6 @@ def remove_account(policy_path: Path, provider: str, name: str, delete_home: boo
     data = load_accounts(policy_path)
     entry = next((item for item in data["providers"][provider] if item["name"] == name), None)
     if entry is None:
-        if any(item["name"] == name for item in account_entries(policy_path, provider)):
-            raise PlanError(f"{name} belongs to Coding Agent 2; remove it there (Settings > AI Provider Accounts "
-                            "or `coding account rm`)")
         raise PlanError(f"{provider} has no account {name}")
     data["providers"][provider].remove(entry)
     order = [item for item in data["order"].get(provider, []) if item != name]
@@ -1518,7 +1467,7 @@ def remove_account(policy_path: Path, provider: str, name: str, delete_home: boo
 def order_accounts(policy_path: Path, provider: str, names: Sequence[str]) -> List[str]:
     provider = account_provider(provider)
     data = load_accounts(policy_path)
-    known = {DEFAULT_ACCOUNT, *(entry["name"] for entry in account_entries(policy_path, provider))}
+    known = {DEFAULT_ACCOUNT, *(entry["name"] for entry in data["providers"][provider])}
     unknown = [name for name in names if name not in known]
     if not names or unknown or len(set(names)) != len(names):
         raise PlanError(f"order needs known {provider} accounts once each ({', '.join(sorted(known))})"
@@ -1534,7 +1483,7 @@ def accounts_payload(policy_path: Path, check_login: bool = True) -> Dict[str, A
     for provider in ACCOUNT_PROVIDERS:
         entries = {entry["name"]: entry for entry in account_entries(policy_path, provider)}
         rotation = account_rotation(policy_path, provider)
-        names = [*(rotation or [DEFAULT_ACCOUNT]), *(name for name in entries if name not in rotation)]
+        names = rotation or [DEFAULT_ACCOUNT]
         launch = None
         if check_login and entries:
             try:
@@ -1548,19 +1497,16 @@ def accounts_payload(policy_path: Path, check_login: bool = True) -> Dict[str, A
             key = quota_key(provider, name)
             reading = usage["providers"].get(key) if key == provider else usage["accounts"].get(key)
             logged_in = None
-            if launch and entry.get("available", True):
+            if launch:
                 logged_in = provider_logged_in(provider, launch, account_environment(provider, Path(home) if home else None))
             listed.append({
                 "name": name, "home": home or str(default_account_home(provider)), "default": home is None,
-                "from": "coding-agent" if entry.get("linked") else "coding-opus",
-                "email": entry.get("email"), "activeInCodingAgent": entry.get("active", False),
-                "ready": entry.get("available", True), "inRotation": name in rotation or not rotation,
+                "from": "coding-opus", "email": None, "activeInCodingAgent": False,
+                "ready": True, "inRotation": True,
                 "loggedIn": logged_in, "quota": reading,
             })
         providers[provider] = listed
-    return {"path": str(accounts_path(policy_path)),
-            "codingAgentFiles": [str(path) for path in linked_account_files(policy_path)],
-            "providers": providers}
+    return {"path": str(accounts_path(policy_path)), "providers": providers}
 
 
 def quota_headline(reading: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -2357,7 +2303,8 @@ def available_builtin_providers() -> List[str]:
     ]
 
 
-def choose_provider(requested: str, worker: Dict[str, Any], policy: Dict[str, Any]) -> str:
+def choose_provider(requested: str, worker: Dict[str, Any], policy: Dict[str, Any],
+                    eligible_order: Optional[Sequence[str]] = None) -> str:
     if requested == "custom":
         return requested
     available = available_builtin_providers()
@@ -2365,7 +2312,7 @@ def choose_provider(requested: str, worker: Dict[str, Any], policy: Dict[str, An
     read_only = worker.get("mode") == "read-only"
     candidates = [
         provider
-        for provider in policy["providerOrder"]
+        for provider in (policy["providerOrder"] if eligible_order is None else eligible_order)
         if provider in available
         and provider not in conserved
         and (not read_only or PROVIDER_CAPABILITIES[provider]["readOnly"])
@@ -2501,6 +2448,134 @@ def load_task(worker: Dict[str, Any], plan_dir: Path, orchestration: Optional[Pa
     return f"{task.rstrip()}\n\n{WORKER_CONTRACT}\n"
 
 
+def validate_resources(value: Any, worker_id: str) -> List[str]:
+    """Shared things a worker's checks hold (a port, a test database, a build folder), as `kind:name`."""
+    if not isinstance(value, list):
+        raise PlanError(f"worker {worker_id} resources must be an array of strings")
+    if len(value) > MAX_RESOURCES:
+        raise PlanError(f"worker {worker_id} may declare at most {MAX_RESOURCES} resources")
+    resources: List[str] = []
+    for entry in value:
+        name = entry.strip().lower() if isinstance(entry, str) else ""
+        if not RESOURCE_PATTERN.fullmatch(name):
+            raise PlanError(f"worker {worker_id} resource {entry!r} is not a short name such as port:3000 or db:test")
+        if name not in resources:
+            resources.append(name)
+    return sorted(resources)
+
+
+def playbook_family(settings: Dict[str, Any], book_id: Optional[str]) -> Optional[str]:
+    book = (settings.get("playbooks") or {}).get(book_id)
+    return book.get("family") if isinstance(book, dict) else None
+
+
+def family_allows(family: Optional[str], provider: str, model: Optional[str] = None) -> bool:
+    if family == "claude":
+        return provider == "claude"
+    if family == "other":
+        name = model if isinstance(model, str) else ""
+        return provider != "claude" and not re.search(r"(?:^|[/.:])claude(?:[-_./:]|$)", name, re.I)
+    return True
+
+
+def playbook_provider_lock(settings: Dict[str, Any], book_id: Optional[str]) -> Optional[str]:
+    """The one provider a playbook runs on, when every worker phase (and every rule) pins the same one."""
+    book = (settings.get("playbooks") or {}).get(book_id) if book_id else None
+    if not isinstance(book, dict):
+        return None
+    if book.get("family") == "claude":
+        return "claude"
+    if book.get("family") == "other":
+        return None
+    pinned = set()
+    for phase in book.get("phases") or []:
+        if not isinstance(phase, dict) or phase.get("who") == "lead":
+            continue
+        pinned.add(phase.get("provider", "auto"))
+        for rule in phase.get("rules") or []:
+            use = rule.get("use") if isinstance(rule, dict) else None
+            if isinstance(use, dict) and "provider" in use:
+                pinned.add(use["provider"])
+    return next(iter(pinned)) if len(pinned) == 1 and "auto" not in pinned else None
+
+
+def playbook_twin(settings: Dict[str, Any], book_id: Optional[str]) -> Optional[Tuple[str, str]]:
+    """Another single-provider playbook with the same phases, pinned to a different provider."""
+    lock = playbook_provider_lock(settings, book_id)
+    books = settings.get("playbooks") or {}
+    family = playbook_family(settings, book_id)
+    phase_ids = lambda book: [phase.get("id") for phase in book.get("phases") or [] if isinstance(phase, dict)]
+    if family and book_id:
+        other_family = "other" if family == "claude" else "claude"
+        suffix = f"-{family}"
+        if book_id.endswith(suffix):
+            twin_id = book_id[:-len(suffix)] + f"-{other_family}"
+            if playbook_family(settings, twin_id) == other_family and phase_ids(books[book_id]) == phase_ids(books[twin_id]):
+                label = "claude" if other_family == "claude" else "GPT / other providers"
+                return twin_id, label
+        return None
+    if not lock:
+        return None
+    mine = phase_ids(books[book_id])
+    for other_id, other in books.items():
+        other_lock = playbook_provider_lock(settings, other_id)
+        if other_id != book_id and other_lock and other_lock != lock and phase_ids(other) == mine:
+            return other_id, other_lock
+    return None
+
+
+def family_switch_hint(settings: Dict[str, Any], book_id: Optional[str], phase: Optional[str]) -> str:
+    lock = playbook_provider_lock(settings, book_id)
+    family = playbook_family(settings, book_id)
+    if not lock and family != "other":
+        return ""
+    group = lock or "GPT / other providers"
+    twin = playbook_twin(settings, book_id)
+    if twin is None:
+        return (f" No playbook with the same phases runs on another provider; ask the user whether to wait for "
+                f"{group} or to switch playbooks.")
+    other, other_lock = twin
+    where = f" from phase {phase}" if phase else ""
+    return (f" To continue on {other_lock}, ask the user first; if they agree, run `note \"to {other}: {group} quota "
+            f"ran out\" --kind switch` and send the remaining waves with \"playbook\": \"{other}\"{where}. "
+            "Unfinished units restart from their files and diffs: a session never moves between providers.")
+
+
+def refuse_low_quota_for_plan(plan: Dict[str, Any], policy_path: Path) -> None:
+    try:
+        refuse_low_quota(plan["workers"], policy_path)
+    except PlanError as error:
+        try:
+            hint = family_switch_hint(playbook_settings(policy_path), plan.get("playbook"), plan.get("phase"))
+        except PlanError:
+            hint = ""
+        raise PlanError(f"{str(error).rstrip('. ')}.{hint}" if hint else str(error)) from error
+
+
+def validate_allow_commands(value: Any, worker_id: str, mode: str) -> List[str]:
+    """Command prefixes a Claude writer may run (its checks); everything else still needs a prompt nobody answers."""
+    if not isinstance(value, list):
+        raise PlanError(f"worker {worker_id} allowCommands must be an array of strings")
+    if value and mode != "write":
+        raise PlanError(f"worker {worker_id}: allowCommands is for write workers; a read-only worker runs no commands")
+    if len(value) > MAX_ALLOW_COMMANDS:
+        raise PlanError(f"worker {worker_id} may allow at most {MAX_ALLOW_COMMANDS} commands")
+    commands: List[str] = []
+    for entry in value:
+        command = " ".join(entry.split()) if isinstance(entry, str) else ""
+        if not ALLOW_COMMAND_PATTERN.fullmatch(command):
+            raise PlanError(f"worker {worker_id} allowCommands entry {entry!r} must be a plain command prefix such as "
+                            "'python -m pytest' (no wildcards, quotes, pipes, redirections or separators)")
+        if command not in commands:
+            commands.append(command)
+    return commands
+
+
+def claude_command_rules(commands: Sequence[str]) -> List[str]:
+    shells = ["Bash", "PowerShell"] if os.name == "nt" else ["Bash"]
+    return [rule for shell in shells for command in commands for rule in (f"{shell}({command})", f"{shell}({command} *)")]
+
+
 def validate_plan(
     raw: Any,
     plan_path: Path,
@@ -2513,6 +2588,7 @@ def validate_plan(
     policy = validate_policy(policy or DEFAULT_POLICY)
     lead_root = checkout_root(Path.cwd()) or Path.cwd().resolve()
     cwd_roots = [lead_root, *(Path(root) for root in policy["trust"]["cwdRoots"])]
+    target_orchestration = orchestration
     orchestration = orchestration or current_folder()
     if not isinstance(raw, dict):
         raise PlanError("plan must be a JSON object")
@@ -2536,6 +2612,13 @@ def validate_plan(
     title = optional_note(raw.get("title"), "plan.title", NOTE_LIMITS["title"])
     why = optional_note(raw.get("why"), "plan.why", NOTE_LIMITS["why"])
     playbook = optional_name(raw.get("playbook"), "plan.playbook")
+    refuse_bare_playbook(settings.get("playbooks") or {}, playbook, "plan.playbook")
+    if not playbook and target_orchestration:
+        parent_playbook = orchestration_meta(target_orchestration).get("playbook")
+        if playbook_family(settings, parent_playbook):
+            playbook = parent_playbook
+    family = playbook_family(settings, playbook)
+    lock = playbook_provider_lock(settings, playbook)
     phase = optional_name(raw.get("phase"), "plan.phase")
     if strategy_override is None and "strategy" in raw and "preset" in raw:
         raise PlanError("use strategy, not strategy and legacy preset together")
@@ -2589,6 +2672,8 @@ def validate_plan(
             "mcp",
             "idleTimeoutSeconds",
             "account",
+            "resources",
+            "allowCommands",
         }
         if unknown:
             raise PlanError(
@@ -2601,6 +2686,13 @@ def validate_plan(
             raise PlanError(f"duplicate worker id {worker_id}")
         seen.add(worker_id)
         requested_provider = normalized_provider(item.get("provider"))
+        if lock and requested_provider == "auto":
+            requested_provider = lock
+        elif lock and requested_provider != lock:
+            raise PlanError(f"worker {worker_id}: playbook {playbook} runs only on {lock}, not {requested_provider}; "
+                            "drop the worker's provider, or pick another playbook")
+        if not family_allows(family, requested_provider):
+            raise PlanError(f"worker {worker_id}: {playbook} requires a non-Claude provider")
         mode = item.get("mode", "read-only")
         if mode not in ("read-only", "write"):
             raise PlanError(f"worker {worker_id} mode must be read-only or write")
@@ -2657,6 +2749,8 @@ def validate_plan(
             not isinstance(idle_timeout, int) or isinstance(idle_timeout, bool) or not 5 <= idle_timeout <= 86400
         ):
             raise PlanError(f"worker {worker_id} idleTimeoutSeconds must be between 5 and 86400")
+        resources = validate_resources(item.get("resources", []), worker_id)
+        allow_commands = validate_allow_commands(item.get("allowCommands", []), worker_id, mode)
         task = load_task(item, plan_path.parent, orchestration)
         normalized = {
             "id": worker_id,
@@ -2675,12 +2769,27 @@ def validate_plan(
             "resume": resume,
             "mcp": mcp,
             "idleTimeoutSeconds": idle_timeout,
+            "resources": resources,
+            "allowCommands": allow_commands,
             "task": task,
             "trust": copy.deepcopy(policy["trust"]),
         }
         if requested_provider == "custom":
             normalized.update(validate_custom(item, worker_id, policy["trust"]))
-        chosen_provider = choose_provider(requested_provider, normalized, policy)
+        eligible_order = None
+        if family:
+            uses_economy_default = ("tier" not in item and not model and not effort and len(workers) == 1
+                                    and (requested_strategy == "economy" or requested_strategy == "auto" and not resume))
+            candidates = {**normalized, "tier": "cheap" if uses_economy_default else tier}
+            eligible_order = [
+                provider for provider in settings["providers"]
+                if provider in policy["providerOrder"] and family_allows(family, provider,
+                                 resolve_model_tier({**candidates, "provider": provider}, policy, settings)["model"])
+            ]
+        chosen_provider = choose_provider(requested_provider, normalized, policy, eligible_order)
+        if lock and chosen_provider != lock:
+            raise PlanError(f"worker {worker_id}: playbook {playbook} runs only on {lock}, but the saved policy would "
+                            f"move it to {chosen_provider}." + family_switch_hint(settings, playbook, phase))
         normalized["provider"] = chosen_provider
         account = item.get("account")
         if account is not None:
@@ -2726,6 +2835,9 @@ def validate_plan(
         if "tier" not in workers[0] and not worker["model"] and not worker["effort"]:
             normalized_workers = [{**worker, "tier": "cheap"}]
     normalized_workers = [resolve_model_tier(worker, policy, settings) for worker in normalized_workers]
+    for worker in normalized_workers:
+        if not family_allows(family, worker["provider"], worker["model"]):
+            raise PlanError(f"worker {worker['id']}: model {worker['model']} is outside the {family} family for {playbook}")
 
     return {
         "version": PLAN_VERSION,
@@ -3144,6 +3256,12 @@ def build_invocation(
             args.append("--disable-slash-commands")
         if "--disallowedTools" in help_text:
             args += ["--disallowedTools", CLAUDE_AGENT_TOOLS]
+        allow_commands = worker.get("allowCommands") or []
+        if allow_commands and mode == "write":
+            if "--allowedTools" not in help_text:
+                raise PlanError("this Claude CLI has no --allowedTools, so allowCommands cannot be honored; "
+                                "update the CLI or drop allowCommands")
+            args += ["--allowedTools", *claude_command_rules(allow_commands)]
         if not worker["mcp"] and "--strict-mcp-config" in help_text:
             args.append("--strict-mcp-config")
         if cost_cap is not None and "--max-budget-usd" in help_text:
@@ -3823,6 +3941,36 @@ def checkout_snapshot(root: Path, ignore: Sequence[Path] = ()) -> Optional[Dict[
 
 def changed_paths(before: Dict[str, str], after: Dict[str, str]) -> List[str]:
     return sorted(path for path in set(before) | set(after) if before.get(path) != after.get(path))
+
+
+class ResourceLocks:
+    """Workers that declare the same resource run one at a time; others keep their parallel slot.
+
+    Locks are taken in sorted order, so two workers holding overlapping sets can never deadlock.
+    """
+
+    def __init__(self) -> None:
+        self.guard = threading.Lock()
+        self.locks: Dict[str, threading.Lock] = {}
+
+    @contextlib.contextmanager
+    def hold(self, names: Sequence[str]) -> Iterator[None]:
+        with self.guard:
+            locks = [self.locks.setdefault(name, threading.Lock()) for name in sorted(set(names))]
+        taken: List[threading.Lock] = []
+        try:
+            for lock in locks:
+                lock.acquire()
+                taken.append(lock)
+            yield
+        finally:
+            for lock in reversed(taken):
+                lock.release()
+
+
+def run_holding_resources(locks: ResourceLocks, worker: Dict[str, Any], *args: Any) -> Dict[str, Any]:
+    with locks.hold(worker.get("resources") or []):
+        return run_worker(worker, *args)
 
 
 class CheckoutRegistry:
@@ -4758,6 +4906,12 @@ def lead_text(lead: Optional[Dict[str, Any]]) -> Optional[str]:
 
 
 def new_orchestration(title: str, playbook: Optional[str], why: Optional[str], lead: Optional[str] = None) -> Dict[str, Any]:
+    if playbook:
+        try:
+            books = playbook_settings().get("playbooks") or {}
+        except PlanError:
+            books = {}
+        refuse_bare_playbook(books, playbook, "new --playbook")
     meta = {
         "version": 1,
         "title": optional_note(require_string(title, "title"), "title", NOTE_LIMITS["title"]),
@@ -5657,6 +5811,18 @@ def plan_warnings(plan: Dict[str, Any]) -> List[str]:
             f"{len(writers)} writers with short briefs: each worker first loads its own CLI context, "
             "so these may cost less done directly or as one worker"
         )
+    if len(writers) >= 2 and plan["maxConcurrent"] > 1 and not any(worker.get("resources") for worker in writers):
+        warnings.append(
+            f"{len(writers)} writers run in parallel and none declares resources; if their checks share a port, "
+            "a test database or a build folder, list it in resources (e.g. port:3000) so they take turns"
+        )
+    shared: Dict[str, List[str]] = {}
+    for worker in workers:
+        for name in worker.get("resources") or []:
+            shared.setdefault(name, []).append(worker["id"])
+    for name, holders in sorted(shared.items()):
+        if len(holders) > 1 and plan["maxConcurrent"] > 1:
+            warnings.append(f"{listed(holders)} share {name} and will run one at a time")
     for worker in workers:
         name = worker["id"]
         if worker["provider"] == "agy" and worker["idleTimeoutSeconds"] is not None:
@@ -5668,6 +5834,13 @@ def plan_warnings(plan: Dict[str, Any]) -> List[str]:
             )
         if worker["provider"] == "kimi" and worker["mode"] == "write" and not worker["isolate"]:
             warnings.append(f"{name}: Kimi writes without asking; give it isolate: true")
+        if worker["provider"] == "claude" and worker["mode"] == "write" and not worker.get("allowCommands"):
+            warnings.append(
+                f"{name} is a Claude writer with no allowCommands, so every shell command, its checks included, "
+                "will be denied; list the check commands (e.g. allowCommands: [\"python -m pytest\"])"
+            )
+        if worker.get("allowCommands") and worker["provider"] != "claude":
+            warnings.append(f"{name}: only Claude workers use allowCommands; {worker['provider']} ignores it")
         if (
             worker["provider"] in ("codex", "claude")
             and not worker["mcp"]
@@ -5737,6 +5910,48 @@ def account_quota_refusal(workers: Sequence[Dict[str, Any]], policy_path: Path) 
     return None
 
 
+def task_sha(task: str) -> str:
+    return hashlib.sha256(" ".join(task.split()).encode("utf-8")).hexdigest()
+
+
+def failed_attempts(orchestration: Path, worker: Dict[str, Any], exclude: Optional[Path]) -> List[str]:
+    """Earlier waves where this unit (same id or same brief) failed for a reason of its own."""
+    sha = task_sha(worker["task"])
+    skip = exclude.resolve() if exclude else None
+    waves: List[str] = []
+    for wave in wave_dirs(orchestration):
+        if skip is not None and wave.resolve() == skip:
+            continue
+        entries = (read_optional_json(wave / "plan.json") or {}).get("workers") or []
+        ids = {entry.get("id"): entry.get("taskSha256") for entry in entries if isinstance(entry, dict)}
+        for worker_id, earlier_sha in ids.items():
+            if worker_id != worker["id"] and not (earlier_sha and earlier_sha == sha):
+                continue
+            outcome = read_optional_json(wave / "workers" / str(worker_id) / "outcome.json") or {}
+            if outcome.get("status") in BREAKER_STATUSES and outcome.get("failureKind") not in BREAKER_EXCUSED:
+                waves.append(wave.name)
+                break
+    return waves
+
+
+def breaker_refusal(run_dir: Optional[Path], workers: Sequence[Dict[str, Any]], reopen: Sequence[str]) -> Optional[str]:
+    orchestration = run_dir.parent if run_dir and (run_dir.parent / ORCHESTRATION_FILE).is_file() else None
+    if orchestration is None:
+        return None
+    broken = []
+    for worker in workers:
+        if worker["id"] in reopen:
+            continue
+        waves = failed_attempts(orchestration, worker, run_dir)
+        if len(waves) >= BREAKER_ATTEMPTS:
+            broken.append(f"{worker['id']} ({', '.join(waves)})")
+    if not broken:
+        return None
+    return (f"{listed(broken)} already failed {BREAKER_ATTEMPTS} times in this orchestration, so the unit will not "
+            "start again: report the failure to the user. A new worker id or a reworded brief does not reset the "
+            "count. Only when the user explicitly asks to retry it, run again with --reopen <worker id>.")
+
+
 def refuse_low_quota(workers: Sequence[Dict[str, Any]], policy_path: Path) -> None:
     refusal = account_quota_refusal(workers, policy_path)
     if refusal is not None:
@@ -5747,14 +5962,18 @@ def detach_run(
     plan_path: Path, run_dir: Optional[Path], policy_path: Path, strategy: Optional[str], allow_low_quota: bool = False,
     make_current: bool = True,
     terminals: Optional[bool] = None,
+    reopen: Sequence[str] = (),
 ) -> Dict[str, Any]:
     if os.environ.get(WORKER_ENV_FLAG):
         raise PlanError("this process is an orchestration worker, and workers cannot start orchestrations")
     orchestration = run_dir.parent if run_dir and (run_dir.parent / ORCHESTRATION_FILE).is_file() else None
     plan = validate_plan(read_json(plan_path), plan_path.resolve(), load_policy(policy_path), strategy,
                          policy_path, orchestration)
+    refusal = breaker_refusal(run_dir, plan["workers"], reopen)
+    if refusal:
+        raise PlanError(refusal)
     if not allow_low_quota:
-        refuse_low_quota(plan["workers"], policy_path)
+        refuse_low_quota_for_plan(plan, policy_path)
     target = (run_dir or default_run_dir()).expanduser().resolve()
     if target.exists() and any(target.iterdir()):
         raise PlanError(f"run directory is not empty: {target}")
@@ -5767,6 +5986,8 @@ def detach_run(
         args += ["--strategy", strategy]
     if allow_low_quota:
         args.append("--allow-low-quota")
+    for worker_id in reopen:
+        args += ["--reopen", worker_id]
     if not make_current:
         args.append("--_no-current")
     args.append("--terminals" if terminals_enabled(plan["policy"], terminals) else "--no-terminals")
@@ -5827,7 +6048,7 @@ def start_handoff(args: argparse.Namespace, policy_path: Path) -> Dict[str, Any]
     if resolved["provider"] != args.provider:
         raise PlanError(f"handoff requested {args.provider}, but policy selected {resolved['provider']}; choose explicitly")
     if not args.allow_low_quota:
-        refuse_low_quota(plan["workers"], policy_path)
+        refuse_low_quota_for_plan(plan, policy_path)
     folder.mkdir(parents=True)
     atomic_write_json(plan_path, raw)
     atomic_write_json(folder / ORCHESTRATION_FILE, {
@@ -5879,14 +6100,18 @@ def run_batch(
     allow_low_quota: bool = False,
     make_current: bool = True,
     terminals: Optional[bool] = None,
+    reopen: Sequence[str] = (),
 ) -> int:
     if os.environ.get(WORKER_ENV_FLAG):
         raise PlanError("this process is an orchestration worker, and workers cannot start orchestrations")
     orchestration = requested_run_dir.parent if requested_run_dir and (requested_run_dir.parent / ORCHESTRATION_FILE).is_file() else None
     plan = validate_plan(read_json(plan_path), plan_path.resolve(), load_policy(policy_path),
                          strategy_override, policy_path, orchestration)
+    refusal = breaker_refusal(requested_run_dir, plan["workers"], reopen)
+    if refusal:
+        raise PlanError(refusal)
     if not (allow_low_quota or background):
-        refuse_low_quota(plan["workers"], policy_path)
+        refuse_low_quota_for_plan(plan, policy_path)
     started = dt.datetime.now(dt.timezone.utc)
     try:
         save_usage(policy_path, codex_quota())
@@ -5967,10 +6192,12 @@ def run_batch(
     previous_signals = install_interruption_handlers()
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=plan["maxConcurrent"])
     futures: List[concurrent.futures.Future] = []
+    resource_locks = ResourceLocks()
     try:
         futures = [
             executor.submit(
-                run_worker,
+                run_holding_resources,
+                resource_locks,
                 worker,
                 run_id,
                 run_dir,
@@ -6069,12 +6296,15 @@ def plan_payload(
                 "timeoutSeconds": worker["timeoutSeconds"],
                 "effectiveTimeoutSeconds": effective_timeout,
                 "promptChars": len(worker["task"]),
+                "taskSha256": task_sha(worker["task"]),
                 "estimatedPromptTokens": worker["estimatedPromptTokens"],
                 "subagents": "blocked by the CLI"
                 if worker["provider"] in ("codex", "claude")
                 else "refused by the worker contract",
                 "mcp": worker["mcp"] if worker["provider"] in ("codex", "claude") else None,
                 "idleTimeoutSeconds": worker["idleTimeoutSeconds"],
+                "resources": worker.get("resources", []),
+                "allowCommands": worker.get("allowCommands", []),
                 "telemetry": {
                     "tokenUsage": PROVIDER_CAPABILITIES.get(worker["provider"], {}).get(
                         "tokenUsage", False
@@ -6867,6 +7097,71 @@ def render_markdown(report: Dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+LEAD_HANDOFF_FILE = "LEAD-HANDOFF.md"
+
+
+def lead_handoff(folder: Path, reason: Optional[str], policy_path: Path) -> Tuple[Path, str]:
+    """Write what the next lead needs to resume this orchestration, possibly in another CLI."""
+    report = build_report(wave_dirs(folder), folder)
+    try:
+        settings = playbook_settings(policy_path)
+    except PlanError:
+        settings = {}
+    runs = report["runs"]
+    last = runs[-1] if runs else {}
+    book = last.get("playbook") or (report["playbooks"] or [None])[-1]
+    lock = playbook_provider_lock(settings, book)
+    twin = playbook_twin(settings, book)
+    done = [(run, worker) for run in runs for worker in run["workers"] if worker["status"] == "succeeded"]
+    open_units = [(run, worker) for run in runs for worker in run["workers"] if worker["status"] != "succeeded"]
+    lines = [f"# Lead handoff: {report['title'] or folder.name}", "",
+             f"- Written: {now_iso()}" + (f" by lead {lead_text(report['lead'])}" if lead_text(report["lead"]) else ""),
+             f"- Orchestration folder: `{folder}`; resume with `use \"{folder}\"`, then `status`.",
+             f"- Why the lead is handing off: {reason or 'not given'}"]
+    if book:
+        lines.append(f"- Playbook of the last wave: `{book}`" + (f", runs only on {lock}" if lock else ""))
+    if twin:
+        lines.append(f"- Twin playbook: `{twin[0]}` runs the same phases on {twin[1]}")
+    lines += ["", "## Waves", ""]
+    for index, run in enumerate(runs, 1):
+        finished = sum(worker["status"] == "succeeded" for worker in run["workers"])
+        lines.append(f"{index}. {run['phase'] or 'wave'} ({run['playbook'] or 'freeform'}): {run['status']}, "
+                     f"{finished}/{len(run['workers'])} done")
+    lines += ["", "## Finished units", ""]
+    for run, worker in done:
+        mark = f", marked {worker['mark']}" if worker.get("mark") else ", not marked yet"
+        lines.append(f"- `{worker['id']}` ({run['phase'] or 'wave'}, {worker['provider']}{mark}): "
+                     f"{cell((worker.get('summary') or '')[:200])}")
+    lines += ["", "## Unfinished units", ""]
+    for run, worker in open_units:
+        why = worker.get("failureKind") or worker.get("error") or worker["status"]
+        where = ", ".join(f"{label} `{value}`" for label, value in (("diff", worker.get("diffPath")),
+                          ("worktree", worker.get("worktree"))) if value)
+        lines.append(f"- `{worker['id']}` ({run['phase'] or 'wave'}, {worker['provider']}): {cell(str(why)[:160])}"
+                     + (f"; {where}" if where else ""))
+    if not open_units:
+        lines.append("- none")
+    if report["journal"]:
+        lines += ["", "## Recent plan changes", ""]
+        lines += [f"- {NOTE_KINDS[entry['kind']]}: {cell(entry['text'])}" for entry in report["journal"][-5:]]
+    lines += ["", "## For the next lead", "",
+              "1. Treat this file as a claim, not proof: read the diffs and worktrees above and run the checks "
+              "before building on them.",
+              "2. Pick the next phase from the playbook (`playbook <id>`) and the last wave above."]
+    if twin:
+        lines.append(f"3. Switching to {twin[1]} changes models and cost: ask the user first. If they agree, run "
+                     f"`note \"to {twin[0]}: <reason>\" --kind switch` and send the next waves with "
+                     f"\"playbook\": \"{twin[0]}\".")
+    else:
+        lines.append("3. Changing provider family changes models and cost: ask the user first.")
+    lines += ["4. Unfinished units restart from their files and diffs with a fresh brief: worker sessions never "
+              "move between providers.", "5. Mark the finished units (`mark`) and close with `report`.", ""]
+    path = folder / LEAD_HANDOFF_FILE
+    text = "\n".join(lines)
+    atomic_write_text(path, text)
+    return path, text
+
+
 def render_status(report: Dict[str, Any]) -> str:
     totals = report["totals"]
     head = [report["title"] or "Orchestration"]
@@ -7082,10 +7377,6 @@ def account_command(args: argparse.Namespace, policy_path: Path) -> int:
     if action == "order":
         print(json.dumps({"provider": provider, "order": order_accounts(policy_path, provider, names)}, indent=2))
         return 0
-    if action == "add" and linked_account_files(policy_path) and not args.local:
-        if names:
-            print("note: Coding Agent 2 names its accounts by email; the name you gave is not used", file=sys.stderr)
-        return add_account_in_coding_agent(provider)
     if len(names) != 1:
         raise PlanError(f"account {action} takes one account name")
     name = names[0]
@@ -7175,6 +7466,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     guide_parser = subparsers.add_parser("guide", help="load one reference shipped beside this runner")
     guide_parser.add_argument("phase", nargs="?", choices=list(GUIDE_PHASES))
+    eval_parser = subparsers.add_parser(
+        "eval", help="score the harness on a disposable fixture (cases, prepare, run, check, record, results, selftest)"
+    )
+    eval_parser.add_argument("eval_args", nargs=argparse.REMAINDER)
     follow_parser = subparsers.add_parser("follow", help="observe one worker's logs without controlling its execution")
     follow_parser.add_argument("folder", type=Path)
     follow_parser.add_argument("worker_id")
@@ -7209,8 +7504,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     account_parser.add_argument("names", nargs="*", help="account name; for order, every account in the order to try")
     account_parser.add_argument("--policy", type=Path)
     account_parser.add_argument("--no-login", action="store_true", help="with add, register the account without logging in")
-    account_parser.add_argument("--local", action="store_true",
-                                help="with add, keep the account only in Coding Opus even when Coding Agent 2 manages accounts")
+    account_parser.add_argument("--local", action="store_true", help=argparse.SUPPRESS)
     account_parser.add_argument("--delete-home", action="store_true", help="with remove, also delete the account's folder and login")
     account_parser.add_argument("--no-login-check", action="store_true", help="with list, skip asking each CLI whether it is logged in")
     for command in ("usage", "models"):
@@ -7261,6 +7555,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     run_parser.add_argument("--strategy", choices=list(STRATEGIES))
     run_parser.add_argument(
         "--allow-low-quota", action="store_true", help="start workers past quota.stopAt; only after the user agrees"
+    )
+    run_parser.add_argument(
+        "--reopen", action="append", default=[], metavar="WORKER_ID",
+        help=f"start a unit that already failed {BREAKER_ATTEMPTS} times in this orchestration; only when the user asks",
     )
     handoff_parser = subparsers.add_parser("handoff", help="start one worker on its own branch without waiting for integration")
     handoff_parser.add_argument("task")
@@ -7314,6 +7612,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     note_parser.add_argument("text")
     note_parser.add_argument("--kind", choices=list(NOTE_KINDS), default="change")
     note_parser.add_argument("--in", dest="into", type=Path, metavar="FOLDER")
+    lead_handoff_parser = subparsers.add_parser(
+        "lead-handoff", help=f"write {LEAD_HANDOFF_FILE} so another lead, in any CLI, can resume this orchestration"
+    )
+    lead_handoff_parser.add_argument("folder", nargs="?", type=Path)
+    lead_handoff_parser.add_argument("--reason", help="one line, such as: Claude quota ran out")
+    lead_handoff_parser.add_argument("--policy", type=Path)
     stop_parser = subparsers.add_parser("stop", help="stop the running waves of an orchestration")
     stop_parser.add_argument("folder", nargs="?", type=Path)
     clean_parser = subparsers.add_parser("clean", help="preview or delete old, completed orchestration folders and runs")
@@ -7397,6 +7701,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "guide":
             print(guide_output(args.phase), end="")
             return 0
+        if args.command == "eval":
+            import harness_eval
+
+            return harness_eval.main(args.eval_args)
         if args.command == "handoff":
             policy_path = (args.policy or default_policy_path()).expanduser().resolve()
             print(json.dumps(start_handoff(args, policy_path), indent=2, ensure_ascii=False))
@@ -7468,6 +7776,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 print(render_status(report), end="")
                 policy_path = (args.policy or default_policy_path()).expanduser().resolve()
                 print("\n".join(usage_summary(usage_payload(policy_path, refresh=False))))
+            return 0
+        if args.command == "lead-handoff":
+            folder = resolve_folder(args.folder)
+            if not wave_dirs(folder):
+                raise PlanError(f"{folder} has no waves yet; nothing to hand off")
+            policy_path = (args.policy or default_policy_path()).expanduser().resolve()
+            path, text = lead_handoff(folder, args.reason, policy_path)
+            print(text, end="")
+            print(f"\nSaved to {path}. Save it to shared chat memory too: chat_memory.py checkpoint --id <id> --file \"{path}\"")
             return 0
         if args.command == "wait":
             print(json.dumps(wait_payload(args.folder, args.timeout), indent=2, ensure_ascii=False))
@@ -7608,12 +7925,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             run_dir = next_wave_dir(folder, raw.get("phase") if isinstance(raw, dict) else None)
         if args.detach:
             print(json.dumps(detach_run(args.plan, run_dir, policy_path, args.strategy, args.allow_low_quota,
-                                        terminals=args.terminals)))
+                                        terminals=args.terminals, reopen=args.reopen)))
             return 0
         if args._background and sys.stdin.buffer.read(1) != b"1":
             raise PlanError("detached launcher exited before preparing the run")
         return run_batch(args.plan, run_dir, policy_path, args.strategy, args._background, args.allow_low_quota,
-                         make_current=not args._no_current, terminals=args.terminals)
+                         make_current=not args._no_current, terminals=args.terminals, reopen=args.reopen)
     except PlanError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

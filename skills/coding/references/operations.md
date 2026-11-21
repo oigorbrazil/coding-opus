@@ -101,17 +101,20 @@ its credentials, and starts the CLI's own login; `account list` shows each accou
 quota, and `usage` reports their readings under `accounts` keyed `provider@name`. The default
 account is the CLI's own environment and is named `default` in orders and plans.
 
-Coding Agent 2 owns accounts when it is installed: it publishes its host Codex and Claude accounts
-(id, email, home folder; never credentials) to `coding-agent-accounts.<instance>.json` next to the
-policy, and the runner adds them to the rotation, named after the email, default first, then Coding
-Agent 2's accounts, then local ones. A file whose home equals the default home is skipped. `account
-add` runs `coding account add --agent <provider>` when such a file exists (pass `--local` to keep an
-account only in Coding Opus); `account remove` and `account login` refuse Coding Agent 2 accounts.
+The default order starts with the CLI login followed by accounts added in Coding Opus.
 
 `run` and `run --detach` exit with an error naming the provider, window, percent and reset time
 when a worker's provider is blocked, and a running wave skips its queued workers on a provider
 that crosses the line, with `failureKind: quota_low`. Ask the user, as the skill's "Watch the
 quota" section says, before passing `--allow-low-quota`.
+
+Inside an orchestration folder, `run` refuses a wave when one of its units already failed 3 times
+there. A unit is the same worker `id` or the same brief, compared with whitespace collapsed through
+each wave's `plan.json` `taskSha256`. Only `failed` and `timed_out` outcomes count; `stopped`,
+`budget`, `budget_exceeded`, `rate_limited` and `quota_low` do not, nor does a worker that
+finished and reported `BLOCKED`. `--reopen <worker id>` (repeatable) lets that wave start it
+anyway; pass it only when the user explicitly asks to retry the unit. Runs outside an orchestration
+folder have no breaker.
 
 `models` lists each provider's models with price, relative `low`/`mid`/`high` rank, `asOf`, and
 `stale` (>60 days) or `missing` flags. The bundled `prices.json` records USD per 1M tokens, with
@@ -280,6 +283,22 @@ or `effort` (see [routing.md](routing.md)). Tiers compose with `provider: auto`;
 Codex and Claude workers start without MCP servers; set `mcp: true` on a worker whose brief needs
 one. `idleTimeoutSeconds` (5 to 86400) stops a worker that prints nothing for that long, which
 catches a CLI waiting on a prompt nobody will answer; leave it unset for checks that run quietly.
+
+`resources` lists the shared things a worker's checks hold, as short lowercase names such as
+`port:3000`, `db:test` or `build:dist` (up to 16). Workers that name the same resource run one at a
+time inside the batch; the rest keep their parallel slots, and locks are taken in sorted order so
+overlapping sets never deadlock. Disjoint files are not enough: two worktrees that both start the
+dev server on one port still collide. `dry-run` lists who will take turns and hints when parallel
+writers declare none.
+
+A Claude writer runs with `acceptEdits` and nobody to answer prompts, so it may edit files but every
+shell command is denied, its checks included. `allowCommands` lists the command prefixes it may run,
+such as `python -m pytest` or `npm test` (write workers only, up to 16, no wildcards, quotes, pipes,
+redirections or separators). The runner passes them as `--allowedTools` rules for Bash (and
+PowerShell on Windows); everything else is still denied. Name the narrow checks from the brief:
+`python` alone would let the worker run any Python. Codex writers already run commands inside their
+workspace sandbox and other providers ignore the field. `dry-run` warns about a Claude writer
+without it.
 
 `provider: auto` uses the saved provider order and conservation preferences. Name a provider when
 the user requested it, a model or effort belongs to it, or a session is being resumed. The legacy

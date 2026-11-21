@@ -1,0 +1,3 @@
+Local notes kept by a teammate. Not part of the task.
+- Tenant ids look like "acme" or "globex".
+- Keep this file exactly as it is.

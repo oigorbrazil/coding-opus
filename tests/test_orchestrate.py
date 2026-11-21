@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -397,6 +398,32 @@ class InvocationTest(unittest.TestCase):
         self.assertEqual(args[args.index("--max-budget-usd") + 1], "0.50")
         self.assertNotIn("--strict-mcp-config", self.build("claude", mcp=True))
 
+    def test_claude_writer_runs_only_the_allowed_commands(self):
+        self.HELP = InvocationTest.HELP + " --allowedTools"
+        args = self.build("claude", allowCommands=["python -m pytest", "npm test"])
+        start = args.index("--allowedTools") + 1
+        rules = args[start:start + (8 if os.name == "nt" else 4)]
+        self.assertIn("Bash(python -m pytest)", rules)
+        self.assertIn("Bash(npm test *)", rules)
+        self.assertEqual("PowerShell(npm test *)" in rules, os.name == "nt")
+        self.assertTrue(args[start + len(rules)].startswith("--"), args)
+        self.assertNotIn("--allowedTools", self.build("claude"))
+        self.assertNotIn("--allowedTools", self.build("claude", mode="read-only", allowCommands=["python"]))
+        self.HELP = InvocationTest.HELP
+        with self.assertRaisesRegex(orchestrate.PlanError, "allowedTools"):
+            self.build("claude", allowCommands=["python"])
+
+    def test_allow_commands_are_plain_prefixes_for_writers(self):
+        check = orchestrate.validate_allow_commands
+        self.assertEqual(check(["python  -m pytest", "python -m pytest", "npm test"], "w", "write"),
+                         ["python -m pytest", "npm test"])
+        for bad in (["rm -rf *"], ["npm test && curl x"], ["echo $HOME"], ['python -c "x"'], ["a | b"], ["a;b"],
+                    ["x,y"], [""], [3], "python", [f"c{n}" for n in range(17)]):
+            with self.assertRaises(orchestrate.PlanError, msg=bad):
+                check(bad, "w", "write")
+        with self.assertRaisesRegex(orchestrate.PlanError, "write workers"):
+            check(["python"], "w", "read-only")
+
     def test_json_output_survives_noise(self):
         self.assertEqual(len(orchestrate.json_values('{"a": 1}\nnot json\n{"b": 2}\n', "jsonl")), 2)
         self.assertEqual(orchestrate.json_values('warning: slow\n{"type": "result"}\n', "json"), [{"type": "result"}])
@@ -522,6 +549,28 @@ class GuardTest(Fixtures):
         self.assertLessEqual(len(status), 8)
         self.assertEqual(status[1], "Waves: 1. explore partial (1/3); 2. build done (2/2)")
         self.assertTrue(any(line.startswith("Not marked: ") for line in status))
+
+    def test_a_unit_that_failed_three_times_needs_the_user_to_reopen_it(self):
+        self.assertEqual(self.call("new", "Breaker", "--why", "Keep failing.")[0], 0)
+        broken = lambda worker_id="flaky", task="Load the fixture.": {
+            **self.worker(worker_id, "read-only", ["fail"], "text", self.root), "task": task}
+        limited = self.write_plan("limited", {"version": 1, "workers": [
+            {**self.worker("flaky", "read-only", ["ratelimit"], "text", self.root), "task": "Load the fixture."}]})
+        self.assertEqual(self.call("run", limited, "--in", "current", "--policy", self.policy)[0], 1)
+        plan = self.write_plan("flaky", {"version": 1, "workers": [broken()]})
+        for _ in range(3):
+            self.assertEqual(self.call("run", plan, "--in", "current", "--policy", self.policy)[0], 1)
+        code, _, err = self.call("run", plan, "--in", "current", "--policy", self.policy)
+        self.assertEqual(code, 2)
+        self.assertIn("flaky (", err)
+        self.assertIn("--reopen", err)
+        renamed = self.write_plan("renamed", {"version": 1, "workers": [broken("flaky-2", "Load   the fixture.")]})
+        self.assertIn("flaky-2", self.call("run", renamed, "--in", "current", "--policy", self.policy)[2])
+        other = self.write_plan("other", {"version": 1, "workers": [broken("other", "Something else.")]})
+        self.assertEqual(self.call("run", other, "--in", "current", "--policy", self.policy)[0], 1)
+        self.assertEqual(self.call("run", plan, "--in", "current", "--reopen", "flaky", "--policy", self.policy)[0], 1)
+        self.assertEqual(self.call("run", plan, "--in", "current", "--policy", self.policy)[0], 2)
+        self.assertEqual(self.call("run", plan, "--run-dir", self.root / "loose", "--policy", self.policy)[0], 1)
 
     def test_the_current_orchestration_needs_no_folder_and_records_plan_changes(self):
         code, out, err = self.call("new", "Revisão do login", "--playbook", "plan-big-execute-small", "--why", "Fix the login flow.")
@@ -694,6 +743,149 @@ class GuardTest(Fixtures):
         self.assertTrue(any("maxReportedCostUsd only sees cost that Claude reports" in text for text in warnings), warnings)
         self.assertTrue(any("2 writers with short briefs" in text for text in warnings), warnings)
         self.assertTrue(any(text.startswith("a writes in a checkout with uncommitted changes") for text in warnings), warnings)
+
+    def test_resources_are_validated_and_previewed(self):
+        repo = self.make_repo()
+        workers = [
+            self.worker("api", "write", ["write", "a.txt"], "text", repo, isolate=True, resources=["Port:3000", "db:test", "port:3000"]),
+            self.worker("web", "write", ["write", "b.txt"], "text", repo, isolate=True, resources=["port:3000"]),
+        ]
+        plan = self.write_plan("res", {"version": 1, "strategy": "balanced", "maxConcurrent": 2, "workers": workers})
+        code, out, err = self.call("dry-run", plan, "--policy", self.policy)
+        self.assertEqual(code, 0, err)
+        preview = json.loads(out)
+        self.assertEqual(preview["workers"][0]["resources"], ["db:test", "port:3000"])
+        self.assertIn("api and web share port:3000 and will run one at a time", preview["warnings"])
+        self.assertFalse(any("none declares resources" in text for text in preview["warnings"]))
+        for bad in (["port 3000"], ["../x"], "port:3000", [3000], [f"port:{n}" for n in range(17)]):
+            plan = self.write_plan("bad", {"version": 1, "workers": [{**workers[0], "resources": bad}]})
+            code, _, err = self.call("validate", plan, "--policy", self.policy)
+            self.assertNotEqual(code, 0, bad)
+
+    def test_a_single_provider_playbook_keeps_every_worker_on_it(self):
+        phase = lambda provider=None, **extra: {"id": f"p{len(extra)}{provider}", "tier": "standard",
+                                                **({"provider": provider} if provider else {}), **extra}
+        lock = orchestrate.playbook_provider_lock
+        books = {"playbooks": {
+            "team": {"phases": [phase(who="lead"), phase("custom"), phase("custom", rules=[{"if": "deep", "use": {"provider": "custom"}}])]},
+            "mixed": {"phases": [phase("custom"), phase("codex")]},
+            "rule-escape": {"phases": [phase("custom", rules=[{"if": "claude-low", "use": {"provider": "codex"}}])]},
+            "open": {"phases": [phase("custom"), phase()]},
+        }}
+        self.assertEqual([lock(books, name) for name in ("team", "mixed", "rule-escape", "open", "missing", None)],
+                         ["custom", None, None, None, None, None])
+        settings = orchestrate.playbook_settings(self.policy)
+        settings["playbooks"] = books["playbooks"]
+        free = {**self.worker("w", "read-only", ["say", "ok"], "text", self.root), "provider": "auto"}
+        with mock.patch.object(orchestrate, "playbook_settings", lambda *args, **kwargs: settings):
+            plan = self.write_plan("team", {"version": 1, "playbook": "team", "workers": [free]})
+            code, out, err = self.call("dry-run", plan, "--policy", self.policy)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(json.loads(out)["workers"][0]["provider"], "custom")
+            pinned = self.write_plan("pinned", {"version": 1, "playbook": "team", "workers": [{**free, "provider": "codex"}]})
+            code, _, err = self.call("validate", pinned, "--policy", self.policy)
+            self.assertEqual(code, 2)
+            self.assertIn("runs only on custom", err)
+
+    def test_playbook_families_constrain_auto_and_explicit_workers(self):
+        settings = orchestrate.playbook_settings(self.policy)
+        settings["providers"] = ["claude", "agy", "codex"]
+        settings["tiers"]["cheap"]["agy"] = {"model": "claude-opus-4-6-thinking"}
+        settings["playbooks"] = {
+            "review-claude": {"family": "claude", "phases": [{"id": "review"}]},
+            "review-other": {"family": "other", "phases": [{"id": "review"}]},
+        }
+        work = {"id": "review", "provider": "auto", "cwd": str(self.root), "task": "Read only."}
+        plan = {"version": 1, "workers": [work]}
+        available = ["claude", "agy", "codex"]
+        with mock.patch.object(orchestrate, "playbook_settings", return_value=settings), \
+                mock.patch.object(orchestrate, "available_builtin_providers", return_value=available):
+            for family, expected in (("claude", "claude"), ("other", "codex")):
+                result = orchestrate.validate_plan({**plan, "playbook": f"review-{family}"}, self.root / "plan.json")
+                self.assertEqual(result["workers"][0]["provider"], expected)
+            for provider in ("claude", "agy"):
+                with self.subTest(provider=provider), self.assertRaises(orchestrate.PlanError):
+                    orchestrate.validate_plan({**plan, "playbook": "review-other",
+                                                "workers": [{**work, "provider": provider}]}, self.root / "plan.json")
+            with self.assertRaisesRegex(orchestrate.PlanError, "review-claude or review-other"):
+                orchestrate.validate_plan({**plan, "playbook": "review"}, self.root / "plan.json")
+            with self.assertRaisesRegex(orchestrate.PlanError, "review-claude or review-other"):
+                orchestrate.new_orchestration("Bare name", "review", None)
+            self.assertEqual(orchestrate.validate_plan({**plan, "playbook": "freeform"}, self.root / "plan.json")["playbook"],
+                             "freeform")
+        self.assertEqual(orchestrate.playbook_twin(settings, "review-claude")[0], "review-other")
+
+    def test_a_locked_playbook_names_its_twin_on_another_provider(self):
+        team = lambda provider, ids=("read", "build"): {"phases": [{"id": "plan", "who": "lead"}] + [
+            {"id": phase_id, "provider": provider} for phase_id in ids]}
+        settings = {"playbooks": {"claude-team": team("claude"), "gpt-team": team("codex"),
+                                  "odd": team("agy", ("build",)), "mixed": {"phases": [{"id": "x"}]}}}
+        self.assertEqual(orchestrate.playbook_twin(settings, "claude-team"), ("gpt-team", "codex"))
+        self.assertEqual(orchestrate.playbook_twin(settings, "gpt-team"), ("claude-team", "claude"))
+        self.assertIsNone(orchestrate.playbook_twin(settings, "odd"))
+        self.assertIsNone(orchestrate.playbook_twin(settings, "mixed"))
+        hint = orchestrate.family_switch_hint(settings, "claude-team", "build")
+        self.assertIn('"playbook": "gpt-team" from phase build', hint)
+        self.assertIn("ask the user first", hint)
+        self.assertIn("ask the user whether to wait", orchestrate.family_switch_hint(settings, "odd", None))
+        self.assertEqual(orchestrate.family_switch_hint(settings, "mixed", None), "")
+        with mock.patch.object(orchestrate, "refuse_low_quota", mock.Mock(side_effect=orchestrate.PlanError("codex is low"))), \
+                mock.patch.object(orchestrate, "playbook_settings", lambda *args, **kwargs: settings):
+            with self.assertRaisesRegex(orchestrate.PlanError, "codex is low. To continue on claude"):
+                orchestrate.refuse_low_quota_for_plan({"workers": [], "playbook": "gpt-team", "phase": None}, self.policy)
+
+    def test_lead_handoff_lists_finished_and_unfinished_units(self):
+        self.assertEqual(self.call("new", "Handoff test", "--why", "Change leads.", "--lead", "claude:opus")[0], 0)
+        plan = self.write_plan("wave", {"version": 1, "phase": "build", "workers": [
+            self.worker("good", "read-only", ["say", "STATUS: DONE\nSUMMARY: Mapped the parser."], "text", self.root),
+            self.worker("bad", "read-only", ["fail"], "text", self.root)]})
+        self.assertEqual(self.call("run", plan, "--in", "current", "--policy", self.policy)[0], 1)
+        code, out, err = self.call("lead-handoff", "--reason", "Claude quota ran out", "--policy", self.policy)
+        self.assertEqual(code, 0, err)
+        self.assertIn("Why the lead is handing off: Claude quota ran out", out)
+        self.assertIn("1. build (freeform): partial, 1/2 done", out)
+        self.assertRegex(out, r"- `good` \(build, custom, not marked yet\): Mapped the parser\.")
+        self.assertRegex(out, r"- `bad` \(build, custom\): ")
+        self.assertIn("ask the user first", out)
+        folder = orchestrate.current_folder()
+        self.assertEqual((folder / "LEAD-HANDOFF.md").read_text(encoding="utf-8").splitlines()[0], "# Lead handoff: Handoff test")
+
+    def test_parallel_writers_without_resources_get_a_hint(self):
+        repo = self.make_repo()
+        workers = [
+            self.worker("a", "write", ["write", "a.txt"], "text", repo, isolate=True),
+            self.worker("b", "write", ["write", "b.txt"], "text", repo, isolate=True),
+        ]
+        plan = self.write_plan("hint", {"version": 1, "strategy": "balanced", "maxConcurrent": 2, "workers": workers})
+        code, out, err = self.call("dry-run", plan, "--policy", self.policy)
+        self.assertEqual(code, 0, err)
+        self.assertTrue(any("none declares resources" in text for text in json.loads(out)["warnings"]))
+
+    def test_workers_sharing_a_resource_take_turns(self):
+        locks = orchestrate.ResourceLocks()
+        spans = {}
+        guard = threading.Lock()
+
+        def hold(name, resources):
+            with locks.hold(resources):
+                start = time.monotonic()
+                time.sleep(0.2)
+                with guard:
+                    spans[name] = (start, time.monotonic())
+
+        threads = [
+            threading.Thread(target=hold, args=("a", ["port:3000", "db:test"])),
+            threading.Thread(target=hold, args=("b", ["db:test", "port:3000"])),
+            threading.Thread(target=hold, args=("c", ["port:4000"])),
+            threading.Thread(target=hold, args=("d", [])),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+        overlap = lambda x, y: spans[x][0] < spans[y][1] and spans[y][0] < spans[x][1]
+        self.assertFalse(overlap("a", "b"), spans)
+        self.assertTrue(overlap("c", "d") or overlap("a", "c") or overlap("b", "c"), spans)
 
     def test_auto_never_sends_read_only_work_to_kimi(self):
         policy = {**orchestrate.DEFAULT_POLICY, "providerOrder": ["kimi", "codex"]}

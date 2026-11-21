@@ -11,13 +11,13 @@ to restore defaults. `doctor` validates the copy. See [onboarding.md](onboarding
 
 ## See and edit the playbooks
 
-`editor` opens the playbooks editor, the same one Coding Agent 2 shows under Settings →
-Playbooks. It starts a small server on 127.0.0.1 in the background (`scripts/editor_server.py`,
+`editor` opens the playbooks editor, built from `editor/` at the repository root (`npm run build`
+writes `assets/editor.html`). It starts a small server on 127.0.0.1 in the background (`scripts/editor_server.py`,
 standard library only), prints its URL with a one-time token and opens it (`--no-open` only
 prints it). The page reads the effective playbooks, edits them as a flowchart with blocks,
 conditions and an inspector, and **Save** writes the user's copy next to the policy, keeping the
 previous one as `.bak` and refusing anything `doctor` would reject. It reloads by itself when the
-file changes elsewhere (Coding Agent 2, an agent, a manual edit) unless there are unsaved edits.
+file changes elsewhere (an agent, a manual edit) unless there are unsaved edits.
 The server stops about a minute and a half after the page closes. It shows the playbooks; to show
 one plan's workers, use [diagram.md](diagram.md).
 
@@ -42,10 +42,10 @@ expire after ten minutes and can be cancelled.
 and actual usage. Switching accounts discards the previous account's in-memory quota reading;
 unavailable quota remains unknown. Existing workers keep their own login profile. **Sign in again**
 creates a fresh profile and replaces the account's registry entry only after confirmed sign-in;
-cancelling leaves the old profile active. Accounts linked from the Agent remain read-only here.
+cancelling leaves the old profile active.
 **Remove** forgets a Coding Opus account; the confirmation can also delete its owned local login
 profiles and history. Stop that account's workers before choosing deletion. The default CLI
-account and Agent-owned profiles cannot be deleted here.
+login is managed in its own CLI.
 
 **Generate with AI** turns natural-language instructions into a draft playbook through the
 selected local Codex or Claude CLI and uses that account's quota. It runs in an empty temporary
@@ -175,6 +175,32 @@ A playbook lists `phases`. Each phase is one role:
 | `after`                    | Runs only after the `gate` of that phase fails, or after that escalation phase                                                                                                 |
 | `then`                     | `next` (default), `recheck` (check the gate again) or `done` (stop here)                                                                                                       |
 | `rules`                    | Model choices for this role, checked top to bottom: `if` a condition, `use` a tier, provider, model or effort                                                                  |
+
+## Single-provider playbooks
+
+Use the provider selector at the top of the editor to see that provider's strategies in the
+sidebar and preview its models in the flow. Codex and the other configured non-Claude providers
+share the `family: other` steps. A step is marked unavailable if the provider cannot run it or the
+selected profile assigns it a Claude model. The selector is for previewing and editing the flow.
+
+In a chat, choose the playbook and provider when making the request. The `family: claude` variant
+runs its workers through Claude Code. The `family: other` variant uses Codex or another configured
+non-Claude provider, excluding Claude model IDs available through another CLI. The lead continues
+in the current chat. Use the exact variant ID in the plan, such as `review-gate-claude` or
+`review-gate-other`. The bare strategy name (`review-gate`) is refused by `playbook`, `new` and
+`run`, with both IDs in the message, so a plan never runs without a family.
+
+Model rules, quota fallbacks and handoffs stay within the selected family until the user requests
+a switch. If the counterpart still has the same phase IDs in the same order, the runner can
+suggest continuing there. Existing playbooks without a `family` keep their provider pins and
+previous routing. See `guide orquestracao` for resuming with `lead-handoff`.
+
+The tier still picks the model from the active profile, so the profile decides which Claude or
+GPT model each tier is. Remember the families' limits: a Claude writer needs `allowCommands` for its
+checks, and a read-only Claude worker cannot run commands, so give reviewers the diff file; Codex
+runs commands in its sandbox but reports no cost, so cap it with `maxReportedTokens` or `maxCalls`.
+A reviewer from the same family misses more than one from another; use `review-gate` with another
+provider when a diff is risky.
 
 ## Choosing the model
 
