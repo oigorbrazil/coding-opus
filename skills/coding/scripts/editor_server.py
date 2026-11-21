@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import socketserver
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -31,6 +32,19 @@ MAX_BODY = 1 << 20
 # Stop when the page has not pinged for this long (it pings every 20 s), or if it never connects.
 IDLE_AFTER_PING = 90
 IDLE_BEFORE_FIRST_PING = 600
+
+
+class LocalHTTPServer(ThreadingHTTPServer):
+    """A loopback server that skips HTTPServer's reverse DNS lookup of its own address.
+
+    `HTTPServer.server_bind` calls `socket.getfqdn(host)` only to fill `server_name`; on some
+    macOS machines resolving 127.0.0.1 takes tens of seconds and delays every start.
+    """
+
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name, self.server_port = host, port
 
 
 class EditorState:
@@ -222,7 +236,7 @@ def make_handler(state: EditorState, port: int):
 
 def serve(policy_path: Path, port: int, token: str) -> None:
     state = EditorState(policy_path, token)
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(state, port))
+    server = LocalHTTPServer(("127.0.0.1", port), make_handler(state, port))
 
     def watchdog() -> None:
         while True:

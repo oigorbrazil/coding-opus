@@ -4,6 +4,7 @@
 import argparse
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import socketserver
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,19 @@ from remote_jobs import RemoteError, RemoteJobs, remote_home, runner
 
 PROTOCOLS = ("2025-11-25", "2025-06-18")
 MAX_BODY = 256 * 1024
+
+
+class LocalHTTPServer(ThreadingHTTPServer):
+    """A loopback server that skips HTTPServer's reverse DNS lookup of its own address.
+
+    `HTTPServer.server_bind` calls `socket.getfqdn(host)` only to fill `server_name`; on some
+    macOS machines resolving 127.0.0.1 takes tens of seconds and delays every start.
+    """
+
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name, self.server_port = host, port
 
 
 def object_schema(properties, required=()):
@@ -289,7 +303,7 @@ def main():
     if not isinstance(config.get("token"), str) or len(config["token"]) < 32:
         raise RemoteError("Configuração sem token válido")
     jobs = RemoteJobs(config)
-    server = ThreadingHTTPServer(("127.0.0.1", config["port"]), handler(jobs, config))
+    server = LocalHTTPServer(("127.0.0.1", config["port"]), handler(jobs, config))
     atomic_text(args.home / "server.json", json.dumps({"pid": os.getpid(), "process_start": runner.process_start_time(os.getpid()), "port": server.server_port}))
     print(f"Coding Opus remote listening on 127.0.0.1:{server.server_port}", flush=True)
     finished = threading.Event()

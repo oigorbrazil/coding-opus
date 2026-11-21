@@ -1655,7 +1655,7 @@ def start_editor(policy_path: Path, open_browser: bool = True) -> Dict[str, Any]
     command = [sys.executable, str(EDITOR_SERVER), "--launch", "--policy", str(policy_path)]
     if not open_browser:
         command.append("--no-open")
-    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=30)
+    result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=60)
     if result.returncode != 0:
         raise PlanError(f"the editor server did not start: {(result.stderr or result.stdout).strip()}")
     payload = json.loads(result.stdout)

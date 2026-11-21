@@ -9,13 +9,12 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from http.server import ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "skills/coding/scripts" if (ROOT / "skills/coding/scripts").is_dir() else ROOT / "coding/scripts"
 sys.path.insert(0, str(SCRIPTS))
 from chat_memory import ChatMemory
-from remote_control import handler, rpc
+from remote_control import LocalHTTPServer, handler, rpc
 from remote_jobs import RemoteError, RemoteJobs
 
 
@@ -122,7 +121,7 @@ class RemoteTest(unittest.TestCase):
 
     def test_server_shutdown_keeps_running_tasks_available(self):
         task = self.jobs.start("project", "codex", "wait until explicitly stopped", "running")
-        server = ThreadingHTTPServer(("127.0.0.1", 0), handler(self.jobs, self.config))
+        server = LocalHTTPServer(("127.0.0.1", 0), handler(self.jobs, self.config))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(server.server_close)
@@ -138,7 +137,7 @@ class RemoteTest(unittest.TestCase):
         self.assertIn(self.finished(task["id"])["state"], ("stopped", "interrupted"))
 
     def test_transport_auth_origin_protocol_and_tool_errors(self):
-        server = ThreadingHTTPServer(("127.0.0.1", 0), handler(self.jobs, self.config))
+        server = LocalHTTPServer(("127.0.0.1", 0), handler(self.jobs, self.config))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(server.server_close)
