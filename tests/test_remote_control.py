@@ -39,7 +39,8 @@ class RemoteTest(unittest.TestCase):
             process = subprocess.Popen([sys.executable, str(Path(__file__).with_name("fake_remote_runner.py")), str(folder)],
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-            self.addCleanup(lambda: process.wait(timeout=10))
+            # A test that failed before stopping its task must not leave the fake runner waiting.
+            self.addCleanup(lambda: (process.poll() is None and process.kill(), process.wait(timeout=10)))
             return process
         self.jobs = RemoteJobs(self.config, launch=launch)
 

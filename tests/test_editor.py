@@ -115,24 +115,23 @@ class EditorServerTest(unittest.TestCase):
         managed = self.root / "managed" / "home"
         managed.mkdir(parents=True)
         self.env["CODEX_HOME"] = str(codex_home)
-        (self.root / "coding-agent-accounts.test.json").write_text(json.dumps({
-            "version": 1, "active": {"codex": "c1", "claude": None},
-            "providers": {"codex": [{"id": "c1", "email": "me@work.example", "home": str(managed)}], "claude": []},
+        # An account added in Coding Opus (`account add`); Coding Agent accounts are no longer imported.
+        (self.root / "coding-opus-accounts.json").write_text(json.dumps({
+            "providers": {"codex": [{"name": "work", "home": str(managed)}], "claude": []}, "order": {},
         }), encoding="utf-8")
         base, token, _ = self.start()
         self.assertEqual(self.request(base, "/api/accounts")[0], 401)
         body = json.loads(self.request(base, "/api/accounts", token=token)[1])
         self.assertTrue(body["ok"], body)
         codex = body["accounts"]["providers"]["codex"]
-        self.assertEqual([(row["name"], row["from"]) for row in codex],
-                         [("default", "cli"), ("me-work-example", "coding-agent")])
-        self.assertTrue(codex[1]["activeInCodingAgent"])
+        self.assertEqual([row["name"] for row in codex], ["default", "work"])
+        self.assertEqual(codex[0]["from"], "cli")
         status, raw = self.request(base, "/api/accounts/order", token=token,
-                                   body={"provider": "codex", "names": ["me-work-example", "default"]})
+                                   body={"provider": "codex", "names": ["work", "default"]})
         body = json.loads(raw)
         self.assertEqual(status, 200)
         self.assertEqual([row["name"] for row in body["accounts"]["providers"]["codex"]],
-                         ["me-work-example", "default"])
+                         ["work", "default"])
         body = json.loads(self.request(base, "/api/accounts/order", token=token,
                                        body={"provider": "codex", "names": ["ghost"]})[1])
         self.assertFalse(body["ok"])

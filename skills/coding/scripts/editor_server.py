@@ -263,7 +263,7 @@ def launch(policy_path: Path, open_browser: bool) -> Dict[str, Any]:
     else:
         options["start_new_session"] = True
     process = subprocess.Popen(command, **options)
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 30  # slow CI machines can take a while to bind
     while True:
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.5):

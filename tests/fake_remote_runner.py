@@ -9,7 +9,7 @@ output = folder / "run/workers/remote"
 output.mkdir(parents=True)
 (folder / "run/state.json").write_text(json.dumps({"status": "running", "workers": {}}), encoding="utf-8")
 if worker["task"].startswith("wait"):
-    deadline = time.monotonic() + 8
+    deadline = time.monotonic() + 30  # long enough for slow CI; tests stop it explicitly
     while time.monotonic() < deadline and not (folder / "run/stop").exists():
         time.sleep(.02)
 stopped = (folder / "run/stop").exists()
