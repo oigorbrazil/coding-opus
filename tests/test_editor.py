@@ -88,6 +88,18 @@ class EditorServerTest(unittest.TestCase):
         self.assertEqual(self.request(base, "/api/playbooks", token=token, host="evil.example:80")[0], 403)
         self.assertEqual(self.request(base, "/api/ping", token=token)[0], 200)
 
+    def test_starts_when_the_token_begins_with_a_hyphen(self):
+        # token_urlsafe starts with "-" about once in 64 launches; argparse must not read it as an option.
+        sys.path.insert(0, str(SCRIPT.parent))
+        import editor_server
+        from unittest import mock
+        with mock.patch("secrets.token_urlsafe", return_value="-" + "a" * 31):
+            payload = editor_server.launch(self.policy, open_browser=False)
+        self.pids.append(payload["pid"])
+        self.assertIn("#token=-aaa", payload["url"])
+        base = payload["url"].split("/#")[0]
+        self.assertEqual(self.request(base, "/api/stamp", token="-" + "a" * 31)[0], 200)
+
     def test_lists_the_agent_clis_on_the_computer(self):
         base, token, _ = self.start()
         self.assertEqual(self.request(base, "/api/clis")[0], 401)

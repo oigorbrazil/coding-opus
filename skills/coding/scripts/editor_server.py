@@ -389,28 +389,55 @@ def launch(policy_path: Path, open_browser: bool) -> Dict[str, Any]:
     import socket
     import subprocess
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
     token = secrets.token_urlsafe(24)
-    command = [sys.executable, str(Path(__file__).resolve()), "--policy", str(policy_path),
-               "--port", str(port), "--token", token]
+    log_path = policy_path.parent / "editor-server.log"
+    try:
+        policy_path.parent.mkdir(parents=True, exist_ok=True)
+        log = log_path.open("ab")
+    except OSError:
+        log = None
     options: Dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
-                               "stderr": subprocess.DEVNULL}
+                               "stderr": log if log is not None else subprocess.DEVNULL}
+
+    def failed() -> SystemExit:
+        try:
+            tail = log_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-6:]
+        except OSError:
+            tail = []
+        return SystemExit("the editor server did not start" + (": " + " | ".join(tail) if tail else ""))
+
     if os.name == "nt":
         options["creationflags"] = 0x00000008 | 0x00000200 | 0x08000000  # detached, new group, no window
     else:
         options["start_new_session"] = True
-    process = subprocess.Popen(command, **options)
     deadline = time.monotonic() + 30  # slow CI machines can take a while to bind
-    while True:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                break
-        except OSError:
-            if process.poll() is not None or time.monotonic() > deadline:
-                raise SystemExit("the editor server did not start")
-            time.sleep(0.2)
+    for attempt in range(3):
+        # The port is free when probed but released before the server binds it; another process can
+        # take it in between, and the server then exits at once. Try again on a fresh port.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        command = [sys.executable, str(Path(__file__).resolve()), "--policy", str(policy_path),
+                   "--port", str(port), "--token=" + token]  # a token may start with "-"
+        process = subprocess.Popen(command, **options)
+        started = False
+        while not started:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                    started = True
+            except OSError:
+                if process.poll() is not None:
+                    break
+                if time.monotonic() > deadline:
+                    process.kill()
+                    raise failed()
+                time.sleep(0.2)
+        if started:
+            break
+    else:
+        raise failed()
+    if log is not None:
+        log.close()  # the server keeps its own copy of the handle
     url = f"http://127.0.0.1:{port}/#token={token}"
     opened = False
     if open_browser:
