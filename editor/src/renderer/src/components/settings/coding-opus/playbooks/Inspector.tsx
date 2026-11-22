@@ -1,6 +1,7 @@
 import { X } from 'lucide-react'
 import { AccountsPanel } from './AccountsPanel'
 import { MODEL_UPDATES_ID, ModelUpdatesPanel } from './ModelUpdatesPanel'
+import { DETECT_CLIS_ID, DetectClisPanel } from './DetectClisPanel'
 import type { ReactNode } from 'react'
 
 import type { MessageKey } from '@/lib/coding-opus-playbooks/i18n'
@@ -315,6 +316,8 @@ export function Inspector({
     body = <ProviderPanel id={selectedId.slice(9)} />
   } else if (selectedId === MODEL_UPDATES_ID) {
     body = <ModelUpdatesPanel />
+  } else if (selectedId === DETECT_CLIS_ID) {
+    body = <DetectClisPanel />
   } else if (selectedId === 'accounts:codex' || selectedId === 'accounts:claude') {
     body = (
       <AccountsPanel

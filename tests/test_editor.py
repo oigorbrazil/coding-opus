@@ -88,6 +88,16 @@ class EditorServerTest(unittest.TestCase):
         self.assertEqual(self.request(base, "/api/playbooks", token=token, host="evil.example:80")[0], 403)
         self.assertEqual(self.request(base, "/api/ping", token=token)[0], 200)
 
+    def test_lists_the_agent_clis_on_the_computer(self):
+        base, token, _ = self.start()
+        self.assertEqual(self.request(base, "/api/clis")[0], 401)
+        body = json.loads(self.request(base, "/api/clis", token=token)[1])
+        self.assertTrue(body["ok"], body)
+        ids = [cli["id"] for cli in body["clis"]]
+        self.assertEqual(ids[:4], ["codex", "claude", "agy", "kimi"])
+        self.assertIn("gemini", ids)
+        self.assertEqual({cli["kind"] for cli in body["clis"]}, {"builtin", "custom"})
+
     def test_lists_the_models_each_provider_offers(self):
         codex_home = self.root / "codex"
         codex_home.mkdir()

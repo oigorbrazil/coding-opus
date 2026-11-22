@@ -18,7 +18,10 @@ prints it). The page reads the effective playbooks, edits them as a flowchart wi
 conditions and an inspector, and **Save** writes the user's copy next to the policy, keeping the
 previous one as `.bak` and refusing anything `doctor` would reject. It reloads by itself when the
 file changes elsewhere (an agent, a manual edit) unless there are unsaved edits.
-The server stops about a minute and a half after the page closes. It shows the playbooks; to show
+**Providers → Detect CLIs** lists the agent CLIs installed on this computer (`probe --all`) and
+adds a built-in one, or a custom one whose adapter is already recorded, to `providers` and to the
+end of every profile `order`; a custom CLI without an adapter waits for onboarding to check its
+`--help`. The server stops about a minute and a half after the page closes. It shows the playbooks; to show
 one plan's workers, use [diagram.md](diagram.md).
 
 **Actual usage** checks the configured providers when the editor opens and every five minutes

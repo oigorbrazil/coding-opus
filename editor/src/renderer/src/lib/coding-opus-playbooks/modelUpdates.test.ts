@@ -1,6 +1,7 @@
 import { parse } from 'yaml'
 import { describe, expect, it } from 'vitest'
 import { applyModelUpdates, modelFamily, planModelUpdates } from './modelUpdates'
+import { parsePlaybooksYaml } from './yaml'
 
 const PLAYBOOKS = `version: 1
 models:
@@ -85,5 +86,16 @@ describe('applyModelUpdates', () => {
       'gpt-5.6-luna',
       'gpt-6.1-terra'
     ])
+  })
+
+  it('writes YAML the editor can read back, even with long quoted notes', () => {
+    const note = 'Built-in: codex 0.167, claude 2.1.321, agy 1.5.3 (login not confirmed by doctor), kimi 2.4.1.'
+    const text = PLAYBOOKS.replace('version: 1\n', `version: 1\nsetup:\n  notes:\n    - "${note}"\n`)
+    const plan = planModelUpdates(text, CATALOG)
+    const written = applyModelUpdates(text, plan.upgrades, plan.additions)
+    // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: the test builds this document.
+    const doc = parsePlaybooksYaml(written) as { setup: { notes: string[] }; tiers: { standard: { codex: { model: string } } } }
+    expect(doc.setup.notes).toEqual([note])
+    expect(doc.tiers.standard.codex.model).toBe('gpt-6.1-sol')
   })
 })

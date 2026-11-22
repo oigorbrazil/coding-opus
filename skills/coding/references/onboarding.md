@@ -11,7 +11,8 @@ find out; skip answers already given or saved in the policy, playbooks or prices
    with `loggedIn: false` goes in the notes with "log in first", not in `providers`; a run on it
    would fail with `auth_required`.
 2. Look on PATH for other agent CLIs, such as `gemini`, `kiro-cli`, `copilot` or `opencode`, and for
-   routes such as `9router`. Run each one's `--help` before counting it; a CLI that fails to start
+   routes such as `9router` (`orchestrate.py probe --all` lists the known ones with versions and
+   login). Run each one's `--help` before counting it; a CLI that fails to start
    goes in the notes with the fix, not in `providers`. Ask: "Is there another AI CLI or routing
    tool you want to use?" Accept a name or executable path.
 3. List each CLI's models when it has a command for that, such as `agy models` or

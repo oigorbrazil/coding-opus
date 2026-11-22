@@ -6,29 +6,38 @@
   <meta name="color-scheme" content="light dark">
   <title>Coding Opus · Controle remoto</title>
   <style>
-    :root { --canvas:#fff; --surface:#f2f2f7; --ink:#1f1f1f; --muted:#6d6d72; --line:#e2e2e3; --action:#0071e3; --fill:#efeff0; --focus:#8e8e93; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color-scheme:light; }
-    @media(prefers-color-scheme:dark) { :root { --canvas:#121214; --surface:#1c1c1f; --ink:#f5f5f7; --muted:#98989f; --line:#3a3a3c; --action:#0091ff; --fill:#2c2c2e; color-scheme:dark; } }
+    :root { --canvas:#fff; --surface:#f2f2f7; --ink:#1f1f1f; --muted:#64646b; --line:#e2e2e3; --action:#075dbb; --action-fill:#075dbb; --fill:#efeff0; --focus:#2766b9; --ready:#176b43; --attention:#875619; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color-scheme:light; }
+    @media(prefers-color-scheme:dark) { :root { --canvas:#121214; --surface:#1c1c1f; --ink:#f5f5f7; --muted:#aaaab2; --line:#3a3a3c; --action:#8fc1ff; --action-fill:#095bb8; --fill:#2c2c2e; --focus:#8fc1ff; --ready:#8fdaae; --attention:#f2c27c; color-scheme:dark; } }
     * { box-sizing:border-box; }
     body { margin:0; background:var(--canvas); color:var(--ink); font-size:14px; line-height:1.55; }
     main { max-width:960px; margin:auto; padding:32px 24px max(32px,env(safe-area-inset-bottom)); }
-    header { display:flex; justify-content:space-between; align-items:center; gap:24px; border-bottom:1px solid var(--line); padding-bottom:24px; margin-bottom:28px; }
-    h1 { font-size:24px; line-height:1.25; margin:0 0 6px; font-weight:600; letter-spacing:-.025em; }
+    header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px 24px; border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:22px; }
+    h1 { font-size:22px; line-height:1.25; margin:0 0 4px; font-weight:650; letter-spacing:-.025em; }
     h2 { font-size:18px; margin:0 0 16px; font-weight:600; }
     p { margin:0; }
     .muted, small { color:var(--muted); }
-    .workspace { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(220px,1fr); gap:40px; }
-    section { min-width:0; }
+    .workspace { display:grid; grid-template-columns:minmax(218px,.8fr) minmax(0,1.2fr); gap:28px; }
+    section, #taskPane { min-width:0; }
+    #taskPane { border-inline-start:1px solid var(--line); padding-inline-start:28px; }
+    .sectionHead { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 12px; margin-bottom:12px; }
+    .sectionHead h2 { margin:0; }
+    .headerActions { display:flex; align-items:center; gap:12px; }
+    #connectionStatus { font-weight:600; color:var(--attention); }
+    #connectionStatus[data-state="online"] { color:var(--ready); }
+    #lastSync { display:block; font-size:12px; }
     label { display:block; font-weight:500; margin-bottom:6px; }
     input, select, textarea, button { font:inherit; }
     input, select, textarea { width:100%; border:1px solid var(--line); border-radius:12px; background:var(--canvas); color:var(--ink); padding:11px 12px; min-height:44px; }
     textarea { resize:vertical; min-height:140px; line-height:1.55; caret-color:var(--action); }
     input::placeholder, textarea::placeholder { color:var(--muted); }
-    button { min-height:44px; border:1px solid var(--line); background:var(--fill); color:var(--ink); border-radius:999px; padding:10px 18px; cursor:pointer; font-weight:500; }
+    button { min-height:44px; border:1px solid var(--line); background:var(--fill); color:var(--ink); border-radius:10px; padding:9px 14px; cursor:pointer; font-weight:550; }
     button:hover { filter:brightness(.96); }
     button:disabled { cursor:default; opacity:.5; }
-    .primary { background:var(--action); color:white; border-color:var(--action); }
+    .primary { background:var(--action-fill); color:white; border-color:var(--action-fill); }
+    .quiet { background:transparent; border-color:transparent; }
+    .back { margin:0 0 10px -10px; padding-inline:10px; color:var(--action); }
     :focus-visible { outline:2px solid var(--focus); outline-offset:3px; }
-    ::selection { background:var(--action); color:white; }
+    ::selection { background:var(--action-fill); color:white; }
     .field { margin-bottom:18px; }
     .row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
     .row > .field { flex:1; min-width:130px; }
@@ -36,84 +45,116 @@
     #connection { max-width:480px; margin-bottom:36px; }
     #connection .row { align-items:stretch; flex-wrap:nowrap; }
     #token { min-width:0; }
-    #notice { margin:0 0 20px; padding:12px 14px; border-left:3px solid var(--action); background:var(--surface); border-radius:0 12px 12px 0; overflow-wrap:anywhere; }
-    .watch { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; padding-bottom:14px; border-bottom:1px solid var(--line); }
+    #notice { margin:0 0 16px; padding:12px 14px; border:1px solid var(--line); background:var(--surface); border-radius:10px; overflow-wrap:anywhere; }
+    .watch { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin-bottom:10px; }
     .watch small { flex:1 1 140px; line-height:1.4; }
     .watch button { border-radius:12px; padding-inline:12px; }
-    #activity { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin-top:12px; padding:10px 12px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
-    #activity:has(p:empty) { margin:0; padding:0; border:0; }
-    #activity p { flex:1 1 150px; overflow-wrap:anywhere; }
-    #activity button { border-radius:12px; padding-inline:12px; }
-    #sessions { display:flex; flex-direction:column; }
-    .session { text-align:left; border:0; border-radius:0; border-bottom:1px solid var(--line); background:transparent; padding:14px 0; min-width:0; width:100%; overflow-wrap:anywhere; }
-    .session[aria-current="true"] { color:var(--action); }
-    .session strong { display:block; font-weight:500; }
+    .screenReader { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+    .taskGroup { margin:14px 0 20px; }
+    .taskGroup h3 { margin:0 0 4px; color:var(--muted); font-size:13px; font-weight:600; }
+    .session { text-align:left; border:1px solid transparent; border-bottom-color:var(--line); border-radius:0; background:transparent; padding:10px 8px; min-width:0; width:100%; overflow-wrap:anywhere; }
+    .session:hover { background:var(--surface); }
+    .session[aria-current="true"] { background:var(--surface); border-color:var(--line); border-radius:10px; }
+    .session strong { display:block; font-weight:650; }
     .session small { display:block; margin-top:3px; }
-    #output { white-space:pre-wrap; overflow-wrap:anywhere; margin:16px 0 0; font-family:inherit; max-height:60vh; overflow:auto; padding:16px; background:var(--surface); border-radius:12px; scrollbar-color:var(--muted) var(--surface); }
-    #result { margin-top:36px; border-top:1px solid var(--line); padding-top:24px; }
-    #status { font-variant-numeric:tabular-nums; }
+    .taskStatus[data-attention="true"], #status[data-attention="true"] { color:var(--attention); }
+    details { margin-top:14px; border-top:1px solid var(--line); }
+    summary { cursor:pointer; padding:11px 0; }
+    #output, #logs { white-space:pre-wrap; overflow-wrap:anywhere; margin:14px 0 0; }
+    #logs { max-height:45vh; overflow:auto; padding:12px; background:var(--surface); border-radius:10px; scrollbar-color:var(--muted) var(--surface); }
+    #taskContext { margin-bottom:4px; }
+    #taskTitle { overflow-wrap:anywhere; }
+    #status { font-weight:600; }
     .check-option { display:flex; align-items:center; gap:8px; margin:0 0 18px; font-weight:400; }
     .check-option input { width:18px; height:18px; min-height:0; flex:none; accent-color:var(--action); }
     #gate { display:grid; gap:10px; margin-top:16px; padding:14px; border:1px solid var(--line); border-radius:12px; }
     #gateQuestion { overflow-wrap:anywhere; }
     [hidden] { display:none !important; }
-    @media(max-width:640px) { main { padding:24px 20px max(24px,env(safe-area-inset-bottom)); } header { gap:12px; align-items:flex-start; } h1 { font-size:24px; } .workspace { grid-template-columns:1fr; gap:32px; } #disconnect { padding-inline:14px; } .actions button { flex:1; } #switch { flex-basis:100%; } }
-    @media(prefers-reduced-motion:no-preference) { #result { animation:reveal .2s ease-out; } @keyframes reveal { from { opacity:.6; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } } }
+    @media(max-width:680px) {
+      main { padding:18px 16px max(24px,env(safe-area-inset-bottom)); }
+      .workspace { display:block; }
+      #taskPane { border:0; padding:0; }
+      #app[data-view="list"] #taskPane, #app:not([data-view="list"]) #taskList { display:none; }
+      input, select, textarea { font-size:16px; }
+      .actions button { flex:1 1 auto; }
+    }
   </style>
 </head>
 <body>
 <main>
   <header>
     <div><h1>Coding Opus</h1><p class="muted">Controle remoto dos seus agentes</p></div>
-    <button id="disconnect" hidden>Desconectar</button>
+    <div id="headerActions" class="headerActions" hidden>
+      <div><span id="connectionStatus" role="status"></span><small id="lastSync"></small></div>
+      <button id="disconnect" class="quiet" type="button">Desconectar</button>
+    </div>
   </header>
   <div id="notice" role="status" aria-live="polite" hidden></div>
   <form id="connection">
     <h2>Conectar ao computador</h2>
     <label for="token">Chave de acesso</label>
-    <div class="row"><input id="token" type="password" autocomplete="off" required placeholder="Cole a chave configurada no computador"><button class="primary">Conectar</button></div>
+    <div class="row"><input id="token" type="password" autocomplete="off" required placeholder="Cole a chave configurada no computador"><button id="connect" class="primary">Conectar</button></div>
     <p class="muted" style="margin-top:10px">A chave fica nesta aba até você desconectar.</p>
   </form>
-  <div id="app" hidden>
+  <div id="app" data-view="list" hidden>
     <div class="workspace">
-      <section>
-        <h2 id="composerTitle">Novo pedido</h2>
-        <form id="composer">
-          <div class="field"><label for="project">Projeto</label><select id="project" required></select></div>
-          <div class="row">
-            <div class="field"><label for="agent">Agente</label><select id="agent"><option value="codex">Codex</option><option value="claude">Claude Code</option></select></div>
-            <div class="field"><label for="mode">Permissão</label><select id="mode"><option value="read-only">Somente leitura</option><option value="write">Permitir alterações</option></select></div>
+      <section id="taskList" aria-labelledby="taskListTitle">
+        <div class="sectionHead">
+          <h2 id="taskListTitle" tabindex="-1">Tarefas</h2>
+          <button id="newTask" type="button" class="primary">Nova tarefa</button>
+        </div>
+        <p id="activityMessage" class="screenReader" role="status" aria-atomic="true"></p>
+        <div id="sessions"><p class="muted">Carregando tarefas…</p></div>
+        <details>
+          <summary>Notificações</summary>
+          <div class="watch">
+            <button id="notifications" type="button">Ativar notificações</button>
+            <small id="notificationHelp" role="status">Receba avisos enquanto o painel estiver aberto e conectado.</small>
           </div>
-          <label id="isolation" class="check-option" hidden><input id="isolate" type="checkbox"> Trabalhar em uma cópia Git separada (worktree)</label>
-          <div class="field"><label for="prompt">O que você quer fazer?</label><textarea id="prompt" required maxlength="50000" placeholder="Descreva o pedido e o resultado esperado."></textarea></div>
-          <div class="actions"><button id="send" class="primary">Iniciar tarefa</button><button id="newSession" type="button" hidden>Nova conversa</button></div>
-        </form>
+        </details>
       </section>
-      <section>
-        <h2>Conversas recentes</h2>
-        <div class="watch">
-          <button id="notifications" type="button">Ativar notificações</button>
-          <small id="notificationHelp" role="status">Receba avisos enquanto o painel estiver aberto e conectado.</small>
-        </div>
-        <div id="activity">
-          <p id="activityMessage" role="status" aria-live="polite" aria-atomic="true"></p>
-          <button id="openActivity" type="button" hidden>Ver tarefa</button>
-        </div>
-        <div id="sessions"><p class="muted">Nenhuma conversa iniciada por aqui.</p></div>
-      </section>
+      <div id="taskPane">
+        <p id="selectionHint" class="muted">Selecione uma tarefa para ver o andamento e a resposta.</p>
+        <section id="composerPanel" hidden aria-labelledby="composerTitle">
+          <button class="quiet back" data-back type="button">Voltar às tarefas</button>
+          <h2 id="composerTitle" tabindex="-1">Nova tarefa</h2>
+          <form id="composer">
+            <div class="field"><label for="project">Projeto</label><select id="project" required></select></div>
+            <div class="row">
+              <div class="field"><label for="agent">Agente</label><select id="agent"><option value="codex">Codex</option><option value="claude">Claude Code</option></select></div>
+              <div class="field"><label for="mode">Permissão</label><select id="mode"><option value="read-only">Somente leitura</option><option value="write">Permitir alterações</option></select></div>
+            </div>
+            <label id="isolation" class="check-option" hidden><input id="isolate" type="checkbox"> Trabalhar em uma cópia Git separada (worktree)</label>
+            <div class="field"><label for="prompt">O que você quer fazer?</label><textarea id="prompt" required maxlength="50000" placeholder="Descreva o resultado que você espera."></textarea></div>
+            <div class="actions"><button id="send" class="primary">Iniciar tarefa</button></div>
+          </form>
+        </section>
+        <section id="result" hidden aria-labelledby="taskTitle">
+          <button class="quiet back" data-back type="button">Voltar às tarefas</button>
+          <div class="sectionHead"><h2 id="taskTitle" tabindex="-1">Andamento</h2></div>
+          <p id="taskContext" class="muted"></p>
+          <p id="status" role="status"></p>
+          <form id="gate" hidden>
+            <strong>Checagem pendente</strong>
+            <p id="gateQuestion"></p>
+            <label for="gateNote">Observação opcional</label>
+            <input id="gateNote" type="text" maxlength="1000">
+            <div class="row"><button type="submit" value="pass">Passou</button><button type="submit" value="fail">Falhou</button></div>
+          </form>
+          <p id="output"></p>
+          <details id="technical" hidden>
+            <summary>Saída técnica</summary>
+            <pre id="logs" tabindex="0" aria-label="Saída técnica da tarefa"></pre>
+          </details>
+          <div class="actions">
+            <button id="continueTask" class="primary" type="button" hidden>Continuar conversa</button>
+            <button id="switch" type="button" hidden>Continuar na outra IA</button>
+            <button id="stop" type="button" hidden>Interromper</button>
+            <button id="refresh" class="quiet" type="button">Atualizar</button>
+          </div>
+        </section>
+      </div>
     </div>
-    <section id="result" hidden>
-      <div class="row"><h2 style="margin:0">Andamento</h2><span id="status" class="muted"></span></div>
-      <div class="actions"><button id="refresh">Atualizar</button><button id="stop">Interromper</button><button id="switch">Continuar na outra IA</button></div>
-      <form id="gate" hidden>
-        <strong>Checagem pendente</strong>
-        <p id="gateQuestion"></p>
-        <label for="gateNote">Observação opcional</label>
-        <input id="gateNote" type="text" maxlength="1000">
-        <div class="row"><button type="submit" value="pass">Passou</button><button type="submit" value="fail">Falhou</button></div>
-      </form>
-      <pre id="output" tabindex="0" aria-label="Resultado e andamento da tarefa"></pre>
-    </section>
   </div>
 </main>
 <script>
@@ -124,11 +165,43 @@
   const activeStates = new Set(['starting','running','stopping','needs_input']);
   const attentionStates = new Set(['needs_input','failed','timed_out','skipped']);
   let token = '', sessions = [], selected = null, taskId = null, busy = false, sending = false, retryId = null, transfer = false;
-  let activitySession = null, activityTask = null, notificationWorker = null, gateKey = null;
+  let notificationWorker = null, gateKey = null;
   let listVersion = 0, listKey = '', watching = false, polling = false, deciding = false, newestSeen = '';
+  let connectionFailures = 0, lastSync = null;
   const observed = new Map();
   const projectNames = new Map();
   const notice = text => { el('notice').textContent = text; el('notice').hidden = !text; };
+  const agentName = agent => agent === 'codex' ? 'Codex' : 'Claude Code';
+
+  class ConnectionError extends Error {}
+
+  function showConnection(state) {
+    const label = state === 'online' ? 'Conectado' : state === 'reconnecting' ? 'Reconectando…' : 'Offline';
+    const status = el('connectionStatus');
+    status.dataset.state = state;
+    if (status.textContent !== label) status.textContent = label;
+    el('lastSync').textContent = lastSync ? 'Atualizado às ' +
+      lastSync.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}) : '';
+  }
+
+  function reportError(error) {
+    if (!(error instanceof ConnectionError) || el('app').hidden) {
+      notice(error.message);
+      return;
+    }
+    connectionFailures += 1;
+    showConnection(navigator.onLine && connectionFailures === 1 ? 'reconnecting' : 'offline');
+  }
+
+  function showView(view) {
+    el('app').dataset.view = view;
+    el('selectionHint').hidden = view !== 'list';
+    el('composerPanel').hidden = view !== 'compose';
+    el('result').hidden = view !== 'detail';
+    const heading = view === 'list' ? 'taskListTitle' : view === 'compose' ? 'composerTitle' : 'taskTitle';
+    el(heading).focus({preventScroll:true});
+    if (matchMedia('(max-width:680px)').matches) window.scrollTo(0,0);
+  }
 
   function activityType(session) {
     if (session.task_state === 'needs_input') return 'gate';
@@ -140,11 +213,8 @@
     const project = projectNames.get(session.project) || session.project;
     const message = type === 'gate' ? 'Uma checagem precisa da sua decisão.' :
       type === 'attention' ? 'Uma tarefa precisa de atenção.' : 'Uma tarefa tem resposta disponível.';
-    activitySession = session.id;
-    activityTask = session.task_id;
     const more = count > 1 ? ` Há mais ${count - 1} na lista.` : '';
     el('activityMessage').textContent = `${project} · ${message}${more}`;
-    el('openActivity').hidden = false;
     if (sendNotification && notificationWorker && Notification.permission === 'granted') {
       notificationWorker.showNotification('Coding Opus', {
         body: message + more,
@@ -164,11 +234,6 @@
       const transitioned = observed.has(session.task_id) && observed.get(session.task_id) !== event;
       if (watching && event && (appeared || transitioned)) {
         changed.push({session,event});
-      }
-      if (activityTask === session.task_id && !event) {
-        activitySession = activityTask = null;
-        el('activityMessage').textContent = '';
-        el('openActivity').hidden = true;
       }
       observed.set(session.task_id,event);
     }
@@ -215,10 +280,20 @@
     } finally {button.disabled=false;}
   };
   async function message(method, params = {}) {
-    const response = await fetch(endpoint, {method:'POST', headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream','Authorization':'Bearer '+token,'MCP-Protocol-Version':'2025-11-25'},body:JSON.stringify({jsonrpc:'2.0',id:crypto.randomUUID(),method,params})});
+    const unavailable = 'O painel perdeu a conexão com o computador. Confira se ele está ligado e conectado.';
+    const response = await fetch(endpoint, {
+      method:'POST',
+      headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream','Authorization':'Bearer '+token,'MCP-Protocol-Version':'2025-11-25'},
+      body:JSON.stringify({jsonrpc:'2.0',id:crypto.randomUUID(),method,params}),
+      signal:AbortSignal.timeout?.(8000)
+    }).catch(() => { throw new ConnectionError(unavailable); });
     if (response.status === 401) throw Error('Chave inválida. Confira a chave de acesso no computador.');
+    if (response.status >= 500) throw new ConnectionError(unavailable);
     if (!response.ok) throw Error('Não foi possível completar o pedido. Confira a conexão e tente novamente.');
-    const data = await response.json();
+    const data = await response.json().catch(() => { throw new ConnectionError(unavailable); });
+    connectionFailures = 0;
+    lastSync = new Date();
+    showConnection('online');
     if (data.error) throw Error(data.error.message);
     return data.result;
   }
@@ -228,20 +303,59 @@
     return result.structuredContent.result;
   }
   function renderSessions() {
-    const key = JSON.stringify([selected?.id,sessions.map(session=>[session.id,session.agent,session.project,session.title,session.task_state])]);
+    const key = JSON.stringify([selected?.id,sessions.map(session=>[session.id,session.agent,session.project,session.title,session.task_state,session.task_attention])]);
     if (key===listKey) return;
     listKey=key;
     const focused=document.activeElement?.dataset.session;
     el('sessions').replaceChildren();
-    if (!sessions.length) { const p = document.createElement('p'); p.className='muted'; p.textContent='Nenhuma conversa iniciada por aqui.'; el('sessions').append(p); }
-    for (const session of sessions) {
-      const button = document.createElement('button'); button.className='session'; button.type='button'; button.setAttribute('aria-current',String(selected?.id===session.id));
-      button.dataset.session=session.id;
-      const title = document.createElement('strong'); title.textContent=(session.agent==='codex'?'Codex':'Claude Code')+' · '+(projectNames.get(session.project)||session.project);
-      const description = document.createElement('small'); description.textContent=(session.title?session.title+' · ':'')+(stateNames[session.task_state]||session.task_state||'Sem tarefa');
-      button.append(title,description); button.onclick=()=>choose(session).catch(error=>notice(error.message)); el('sessions').append(button);
-      if (focused===session.id) button.focus({preventScroll:true});
+    if (!sessions.length) {
+      const p = document.createElement('p');
+      p.className='muted';
+      p.textContent='Use Nova tarefa para enviar seu primeiro pedido.';
+      el('sessions').append(p);
+      return;
     }
+    const groups = new Map([
+      ['attention', {title:'Precisam de você',items:[]}],
+      ['running', {title:'Em andamento',items:[]}],
+      ['recent', {title:'Recentes',items:[]}]
+    ]);
+    for (const session of sessions) {
+      const attention = Boolean(session.task_attention) || attentionStates.has(session.task_state);
+      groups.get(attention ? 'attention' : activeStates.has(session.task_state) ? 'running' : 'recent').items.push(session);
+    }
+    for (const {title,items} of groups.values()) {
+      if (!items.length) continue;
+      const group = document.createElement('div');
+      group.className='taskGroup';
+      const heading = document.createElement('h3');
+      heading.textContent=title;
+      group.append(heading);
+      for (const session of items) group.append(sessionButton(session));
+      el('sessions').append(group);
+    }
+    if (focused) {
+      [...el('sessions').querySelectorAll('button')].find(button=>button.dataset.session===focused)?.focus({preventScroll:true});
+    }
+  }
+
+  function sessionButton(session) {
+    const button = document.createElement('button');
+    button.className='session';
+    button.type='button';
+    button.setAttribute('aria-current',String(selected?.id===session.id));
+    button.dataset.session=session.id;
+    const title = document.createElement('strong');
+    title.textContent=session.title || 'Tarefa sem título';
+    const project = document.createElement('small');
+    project.textContent=agentName(session.agent)+' · '+(projectNames.get(session.project)||session.project);
+    const status = document.createElement('small');
+    status.className='taskStatus';
+    status.dataset.attention=String(Boolean(session.task_attention) || attentionStates.has(session.task_state));
+    status.textContent=stateNames[session.task_state]||session.task_state||'Sem tarefa';
+    button.append(title,project,status);
+    button.onclick=()=>choose(session).catch(reportError);
+    return button;
   }
   async function refreshSessions() {
     const version=++listVersion;
@@ -254,33 +368,57 @@
     renderSessions();
   }
   function configureComposer() {
-    el('composerTitle').textContent=transfer?'Continuar na outra IA':selected?'Continuar conversa':'Novo pedido';
-    el('project').disabled=!!selected; el('agent').disabled=!!selected&&!transfer; el('mode').disabled=!!selected;
+    el('composerTitle').textContent=transfer?'Continuar na outra IA':selected?'Continuar conversa':'Nova tarefa';
+    el('project').disabled=el('agent').disabled=el('mode').disabled=!!selected||sending;
+    el('prompt').disabled=el('isolate').disabled=sending;
     el('isolation').hidden=!!selected || el('mode').value!=='write';
-    el('newSession').hidden=!selected;
     el('send').textContent=transfer?'Transferir contexto':selected?'Enviar mensagem':'Iniciar tarefa';
-    el('send').disabled=busy||sending;
-    el('switch').disabled=busy||!selected;
-    el('stop').disabled=!busy;
+    const offline=el('connectionStatus').dataset.state==='offline';
+    el('send').disabled=busy||sending||offline;
+    el('continueTask').hidden=el('switch').hidden=busy||!selected;
+    el('continueTask').disabled=el('switch').disabled=offline;
+    el('stop').hidden=!busy;
+    el('stop').disabled=offline;
   }
-  async function choose(session) {
+
+  function setTaskStatus(state, attention) {
+    const status=el('status');
+    const label=stateNames[state]||state||'Sem tarefa';
+    if (status.textContent!==label) status.textContent=label;
+    status.dataset.attention=String(Boolean(attention)||attentionStates.has(state));
+  }
+
+  function selectTask(session) {
     selected=session; transfer=false; taskId=session.task_id;
     busy=activeStates.has(session.task_state);
     retryId=null;
     el('project').value=session.project; el('agent').value=session.agent; el('mode').value=session.mode;
-    configureComposer(); renderSessions(); await refreshTask();
+    el('taskTitle').textContent=session.title || 'Andamento';
+    el('taskContext').textContent=(projectNames.get(session.project)||session.project)+' · '+agentName(session.agent);
+    setTaskStatus(session.task_state, session.task_attention);
+    gateKey=null;
+    el('gate').hidden=true;
+    el('technical').hidden=true;
+    el('technical').open=false;
+    el('output').textContent=taskId?'Carregando andamento…':'Esta conversa está pronta para receber um pedido.';
+    configureComposer();
+    renderSessions();
+    showView('detail');
   }
-  el('openActivity').onclick=()=>{
-    const session=sessions.find(item=>item.id===activitySession);
-    if(session)choose(session).then(()=>el('result').scrollIntoView({block:'start'})).catch(error=>notice(error.message));
-  };
+
+  async function choose(session) {
+    notice('');
+    selectTask(session);
+    await refreshTask();
+  }
+
   async function refreshTask() {
     if (!taskId) return;
     const requestedId=taskId;
     const task=await tool('get_task',{task_id:requestedId});
     if(requestedId!==taskId)return;
     busy=activeStates.has(task.state);
-    el('result').hidden=false; el('status').textContent=stateNames[task.state]||task.state;
+    setTaskStatus(task.state, task.attention || selected?.task_attention);
     const gate=task.state==='needs_input' && task.gate?.id && task.gate?.question ? task.gate : null;
     el('gate').hidden=!gate;
     if(gate){
@@ -288,47 +426,73 @@
       if(gateKey!==key){gateKey=key;el('gateNote').value='';}
       el('gateQuestion').textContent=gate.question;
     } else {gateKey=null;}
-    el('output').textContent=task.result||task.error||task.output_tail||(busy?'A resposta aparecerá aqui.':'Sem resposta disponível.');
+    el('output').textContent=task.result||task.error||
+      (gate?'Confirme a checagem acima para continuar.':busy?'A tarefa está em andamento no computador.':'Sem resposta disponível.');
+    el('logs').textContent=task.output_tail||'';
+    el('technical').hidden=!task.output_tail;
     configureComposer();
   }
   el('connection').onsubmit=async event=>{
-    event.preventDefault(); token=el('token').value.trim(); notice('Conectando…');
+    event.preventDefault();
+    if (el('connect').disabled) return;
+    el('connect').disabled=true;
+    token=el('token').value.trim();
+    notice('Conectando…');
     try {
       await message('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'coding-opus-mobile',version:'36.0.0'}});
       const projects=await tool('projects'); el('project').replaceChildren();
       projects.forEach(project=>{const option=document.createElement('option'); option.value=project.id; option.textContent=project.name; el('project').append(option); projectNames.set(project.id,project.name);});
-      el('app').hidden=false; el('connection').hidden=true; el('disconnect').hidden=false; el('token').value='';
-      await refreshSessions(); notice('');
-    } catch(error) { notice(error.message); }
+      await refreshSessions();
+      el('app').hidden=false; el('connection').hidden=true; el('headerActions').hidden=false; el('token').value='';
+      notice('');
+      showView('list');
+    } catch(error) { reportError(error); }
+    finally { el('connect').disabled=false; }
   };
   el('composer').onsubmit=async event=>{
     event.preventDefault(); if(sending||busy)return; sending=true; configureComposer(); retryId ||=crypto.randomUUID();
+    const previous=selected;
+    const project=previous?.project||el('project').value;
+    const agent=el('agent').value;
+    const mode=el('mode').value;
     try {
       const prompt=el('prompt').value;
       const args={prompt,request_id:retryId}; let task;
-      if(transfer)task=await tool('continue_with',{...args,session_id:selected.id,agent:el('agent').value});
-      else if(selected)task=await tool('send_message',{...args,session_id:selected.id});
+      if(transfer)task=await tool('continue_with',{...args,session_id:previous.id,agent});
+      else if(previous)task=await tool('send_message',{...args,session_id:previous.id});
       else {
-        const mode=el('mode').value;
         const isolate=mode==='write' && el('isolate').checked;
-        task=await tool('start_agent',{...args,project:el('project').value,agent:el('agent').value,mode,...(isolate?{isolate}:{})});
+        task=await tool('start_agent',{...args,project,agent,mode,...(isolate?{isolate}:{})});
       }
-      retryId=null; taskId=task.id; el('prompt').value=''; notice('');
+      el('prompt').value='';
+      notice('');
       if(!observed.has(task.id))observed.set(task.id,null);
-      selected=null;
+      selectTask({
+        id:task.session_id,
+        project, agent, mode,
+        title:task.session_id===previous?.id ? previous.title : prompt.slice(0,80),
+        task_id:task.id,
+        task_state:task.state||'starting'
+      });
       await refreshSessions();
-      selected=sessions.find(session=>session.id===task.session_id); transfer=false; renderSessions(); await refreshTask();
-    } catch(error) { notice(error.message); } finally {sending=false;configureComposer();}
+      await refreshTask();
+    } catch(error) { reportError(error); } finally {sending=false;configureComposer();}
   };
   for(const id of ['prompt','project','agent','mode','isolate'])el(id).addEventListener('input',()=>{retryId=null;});
   el('mode').onchange=configureComposer;
-  el('newSession').onclick=()=>{
+  el('newTask').onclick=()=>{
+    if (sending || deciding) return;
+    if (selected) el('prompt').value='';
     selected=null;transfer=false;busy=false;taskId=null;retryId=null;
     el('mode').value='read-only';el('isolate').checked=false;
-    el('result').hidden=true;configureComposer();renderSessions();notice('');
+    configureComposer();renderSessions();notice('');
+    showView('compose');
   };
+  document.querySelectorAll('[data-back]').forEach(button=>{
+    button.onclick=()=>showView('list');
+  });
   el('refresh').onclick=()=>poll(true);
-  el('stop').onclick=async()=>{try{await tool('stop_task',{task_id:taskId});await poll(true);}catch(error){notice(error.message);}};
+  el('stop').onclick=async()=>{try{await tool('stop_task',{task_id:taskId});await poll(true);}catch(error){reportError(error);}};
   el('gate').onsubmit=async(event)=>{
     event.preventDefault();
     if(deciding || !gateKey || !['pass','fail'].includes(event.submitter?.value))return;
@@ -339,10 +503,19 @@
       await tool('resolve_gate',{task_id:taskId,gate_id:gateKey,passed:event.submitter.value==='pass',note:el('gateNote').value.trim()});
       await refreshTask();
       await refreshSessions();
-    }catch(error){notice(error.message);}
+    }catch(error){reportError(error);}
     finally{deciding=false;buttons.forEach(button=>{button.disabled=false;});}
   };
-  el('switch').onclick=()=>{transfer=true;el('agent').value=selected.agent==='codex'?'claude':'codex';configureComposer();el('prompt').focus();};
+  function composeFollowup(anotherAgent) {
+    if (!selected || busy || sending) return;
+    transfer=anotherAgent;
+    retryId=null;
+    el('agent').value=anotherAgent ? (selected.agent==='codex'?'claude':'codex') : selected.agent;
+    configureComposer();
+    showView('compose');
+  }
+  el('continueTask').onclick=()=>composeFollowup(false);
+  el('switch').onclick=()=>composeFollowup(true);
   el('disconnect').onclick=()=>location.reload();
   async function poll(force=false){
     if(el('app').hidden || polling || sending || deciding)return;
@@ -351,11 +524,13 @@
       const lastId=taskId, lastState=selected?.task_state;
       await refreshSessions();
       if(taskId&&(force||busy||taskId!==lastId||selected?.task_state!==lastState))await refreshTask();
-    }catch(error){if(force||el('notice').hidden)notice(error.message);}
-    finally{polling=false;}
+    }catch(error){reportError(error);}
+    finally{polling=false;configureComposer();}
   }
   setInterval(poll,4000);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)void poll(true);});
+  window.addEventListener('offline',()=>{showConnection('offline');configureComposer();});
+  window.addEventListener('online',()=>{showConnection('reconnecting');configureComposer();void poll(true);});
 </script>
 </body>
 </html>

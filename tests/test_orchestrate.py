@@ -350,6 +350,25 @@ class RunnerTest(Fixtures):
         self.assertIn("<svg", svg.read_text(encoding="utf-8"))
 
 
+class DetectClisTest(unittest.TestCase):
+    def test_reports_builtin_and_custom_clis_without_guessing_adapters(self):
+        installed = {"codex": "/bin/codex", "opencode": "/bin/opencode"}
+        probe = lambda provider: {"installed": provider in installed, "version": f"{provider} 1.0" if provider in installed else None,
+                                  "executable": installed.get(provider), "launch": [installed[provider]] if provider in installed else None}
+        with mock.patch.object(orchestrate, "probe_provider", probe), \
+                mock.patch.object(orchestrate.shutil, "which", lambda name: installed.get(name)), \
+                mock.patch.object(orchestrate, "launch_command", lambda executable: [executable]), \
+                mock.patch.object(orchestrate, "cli_version", lambda launch: "opencode v2" if launch else None), \
+                mock.patch.object(orchestrate, "provider_logged_in", lambda provider, launch: True):
+            found = {cli["id"]: cli for cli in orchestrate.detect_clis()}
+        self.assertEqual(list(found)[:4], list(orchestrate.BUILTIN_PROVIDERS))
+        self.assertEqual((found["codex"]["installed"], found["codex"]["loggedIn"]), (True, True))
+        self.assertEqual((found["claude"]["installed"], found["claude"]["loggedIn"]), (False, None))
+        self.assertEqual((found["opencode"]["kind"], found["opencode"]["version"]), ("custom", "opencode v2"))
+        self.assertFalse(found["gemini"]["installed"])
+        self.assertNotIn("adapter", found["opencode"])  # detection never proposes flags
+
+
 class InvocationTest(unittest.TestCase):
     HELP = "--disable --setting-sources --permission-prompts --disable-slash-commands --disallowedTools --strict-mcp-config --max-budget-usd --add-dir"
     FEATURES = "multi_agent                              stable             true\nmulti_agent_v2                           stable             false\n"

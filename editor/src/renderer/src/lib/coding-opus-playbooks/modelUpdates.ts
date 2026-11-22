@@ -1,4 +1,5 @@
-import { parse, stringify } from 'yaml'
+import { parse } from 'yaml'
+import { emitPlaybooksYaml } from './yaml'
 import type { CodingOpusModelCatalog } from '../../../../shared/coding-opus'
 
 /** Replace `from` with `to` wherever the playbooks pick a model (tiers, profiles, roles, phases). */
@@ -196,5 +197,7 @@ export function applyModelUpdates(
   if (Object.keys(models).length > 0) {
     next.models = models
   }
-  return stringify(next)
+  // Emit with the editor's own writer: the editor and the runner read back only that YAML subset,
+  // and `yaml`'s stringify folds long strings over several lines, which neither can parse.
+  return emitPlaybooksYaml(next)
 }

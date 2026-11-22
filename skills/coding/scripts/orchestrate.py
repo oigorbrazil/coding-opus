@@ -7264,6 +7264,49 @@ def provider_logged_in(
     return bool(re.search(r"source=(oauth|api)", output))
 
 
+BUILTIN_LABELS = {"claude": "Claude Code", "codex": "Codex", "agy": "Antigravity", "kimi": "Kimi"}
+# Agent CLIs that can only join as custom adapters. Detection reads `--version` only; an adapter is
+# recorded after a person checks the CLI's non-interactive mode, never guessed from this list.
+KNOWN_CUSTOM_CLIS = (
+    ("opencode", "OpenCode"), ("gemini", "Gemini CLI"), ("copilot", "GitHub Copilot CLI"),
+    ("kiro-cli", "Kiro CLI"), ("qwen", "Qwen Code"), ("cursor-agent", "Cursor Agent"), ("droid", "Factory Droid"),
+)
+
+
+def cli_version(launch: Optional[List[str]]) -> Optional[str]:
+    if not launch:
+        return None
+    try:
+        result = subprocess.run([*launch, "--version"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                                timeout=5, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    lines = (result.stdout or "").strip().splitlines()
+    return lines[0][:120] if lines else None
+
+
+def detect_clis() -> List[Dict[str, Any]]:
+    """Agent CLIs on this machine: the built-in providers plus known CLIs that need a custom adapter."""
+    def builtin(provider: str) -> Dict[str, Any]:
+        info = probe_provider(provider)
+        return {"id": provider, "label": BUILTIN_LABELS[provider], "kind": "builtin", "installed": info["installed"],
+                "version": info["version"], "executable": info["executable"],
+                "loggedIn": provider_logged_in(provider, info["launch"]) if info["installed"] else None}
+
+    def custom(entry: Tuple[str, str]) -> Dict[str, Any]:
+        command, label = entry
+        executable = shutil.which(command)
+        launch = launch_command(executable) if executable else None
+        return {"id": command, "label": label, "kind": "custom", "installed": executable is not None,
+                "version": cli_version(launch), "executable": executable, "loggedIn": None}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        found = [pool.submit(builtin, provider) for provider in BUILTIN_PROVIDERS]
+        found += [pool.submit(custom, entry) for entry in KNOWN_CUSTOM_CLIS]
+        return [future.result() for future in found]
+
+
 def doctor_payload(policy_path: Path) -> Dict[str, Any]:
     python_ok = sys.version_info >= (3, 9)
     exists = policy_path.exists()
@@ -7494,6 +7537,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     editor_parser.add_argument("--no-open", action="store_true", help="start the server and print its URL without opening a browser")
     probe_parser = subparsers.add_parser("probe", help="report available built-in providers")
     probe_parser.add_argument("providers", nargs="*", choices=["codex", "claude", "agy", "kimi"])
+    probe_parser.add_argument("--all", action="store_true",
+                              help="also look for agent CLIs that need a custom adapter, with versions and login")
     doctor_parser = subparsers.add_parser("doctor", help="check the environment and saved policy")
     doctor_parser.add_argument("--policy", type=Path)
     account_parser = subparsers.add_parser(
@@ -7731,6 +7776,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(json.dumps(payload, indent=2, ensure_ascii=False))
             return 0
         if args.command == "probe":
+            if args.all:
+                print(json.dumps(detect_clis(), indent=2, ensure_ascii=False))
+                return 0
             providers = args.providers or ["codex", "claude", "agy", "kimi"]
             print(json.dumps([probe_provider(provider) for provider in providers], indent=2))
             return 0

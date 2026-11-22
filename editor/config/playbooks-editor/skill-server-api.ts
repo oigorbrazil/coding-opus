@@ -12,6 +12,7 @@ import type {
   CodingOpusUsageSnapshot
 } from '../../src/shared/coding-opus'
 import type { LibraryKind } from './knowledge-model'
+import type { DetectedCli } from '../../src/renderer/src/lib/coding-opus-playbooks/cliDetection'
 
 // The page is served by `orchestrate.py editor` on 127.0.0.1 with a one-time token in the hash.
 const token = new URLSearchParams(window.location.hash.slice(1)).get('token') ?? ''
@@ -63,6 +64,10 @@ export function createCodingOpusApi() {
     modelCatalog: () =>
       call<CodingOpusModelCatalogResult>('/api/models').catch(
         (error: unknown): CodingOpusModelCatalogResult => ({ ok: false, error: String(error) })
+      ),
+    detectClis: () =>
+      call<{ ok: true; clis: DetectedCli[] } | { ok: false; error: string }>('/api/clis').catch(
+        (error: unknown) => ({ ok: false as const, error: String(error) })
       ),
     readAccounts: () =>
       call<CodingOpusAccountsResult>('/api/accounts').catch(

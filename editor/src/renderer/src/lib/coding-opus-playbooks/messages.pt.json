@@ -543,5 +543,22 @@
   "playbooks.copyName": "Cópia de {name}",
   "playbooks.duplicate": "Duplicar",
   "playbooks.deletePlaybook": "Apagar playbook",
-  "playbooks.deleteConfirm": "Confirmar exclusão de {name}"
+  "playbooks.deleteConfirm": "Confirmar exclusão de {name}",
+  "playbooks.clisButton": "Detectar CLIs",
+  "playbooks.clisTitle": "CLIs de agentes neste computador",
+  "playbooks.clisHint": "Procura os agentes nativos e as CLIs que entram como adaptador próprio. Adicionar só põe a CLI na lista de provedores; nenhum playbook nem família a usa até você escolher.",
+  "playbooks.clisChecking": "Procurando CLIs...",
+  "playbooks.clisUnsupported": "Este editor não consegue procurar CLIs; rode orchestrate.py probe --all.",
+  "playbooks.clisInstalled": "Instaladas",
+  "playbooks.clisConfigured": "Já é um provedor",
+  "playbooks.clisAddable": "Ainda não é um provedor",
+  "playbooks.clisNeedsAdapter": "Precisa de um adaptador antes: peça ao lead para configurá-lo pelo --help da CLI",
+  "playbooks.clisLoggedIn": "com login",
+  "playbooks.clisLoggedOut": "sem login",
+  "playbooks.clisLoginUnknown": "login não verificado",
+  "playbooks.clisAdd": "Adicionar",
+  "playbooks.clisAdded": "Adicionado: {names}. Fica salvo como qualquer outra edição.",
+  "playbooks.clisMissing": "Não encontradas: {names}.",
+  "playbooks.clisAddHint": "Instale uma CLI e detecte de novo para vê-la aqui.",
+  "playbooks.clisRecheck": "Detectar de novo"
 }

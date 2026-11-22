@@ -67,6 +67,7 @@ import { Select } from './fields'
 import { FlowCanvas } from './FlowCanvas'
 import { ACCOUNT_PROVIDERS } from './AccountsPanel'
 import { MODEL_UPDATES_ID } from './ModelUpdatesPanel'
+import { DETECT_CLIS_ID } from './DetectClisPanel'
 import { CHECK_KEYS, Inspector, routingName, taskLabel } from './Inspector'
 import { NodeCanvas } from './NodeCanvas'
 import styles from './Playbooks.module.css'
@@ -201,7 +202,9 @@ export function PlaybooksEditor({
     revisionRef.current += 1
     setRevision(revisionRef.current)
   }
-  const restoreSnapshot = (entry: ReturnType<typeof snapshot>) => {
+  // Undo and redo clear the selection: the selected node may be gone. A panel that rewrites the
+  // file (model updates, detected CLIs) keeps itself open so its confirmation stays visible.
+  const restoreSnapshot = (entry: ReturnType<typeof snapshot>, keepSelection = false) => {
     const restored = createPlaybooksState(entry.yaml)
     restored.workflows = structuredClone(entry.workflows)
     restored.wf = restored.workflows[s.wf] ? s.wf : restored.wf
@@ -227,7 +230,9 @@ export function PlaybooksEditor({
       spent: s.spent,
       globalEdited: true
     })
-    setSelectedId(null)
+    if (!keepSelection) {
+      setSelectedId(null)
+    }
     revise()
     bump()
   }
@@ -256,7 +261,7 @@ export function PlaybooksEditor({
   const replaceYaml = (text: string) => {
     const replaced = createPlaybooksState(text)
     attachDocs(replaced)
-    restoreSnapshot({ yaml: toYaml(replaced), workflows: replaced.workflows })
+    restoreSnapshot({ yaml: toYaml(replaced), workflows: replaced.workflows }, true)
     record()
   }
 
@@ -774,6 +779,17 @@ export function PlaybooksEditor({
                   </button>
                 )
               })}
+              <button
+                type="button"
+                className={styles.wf}
+                aria-current={selectedId === DETECT_CLIS_ID}
+                onClick={() => showInspector(DETECT_CLIS_ID)}
+              >
+                <span className={styles.ico}>
+                  <Search size={13} />
+                </span>
+                <span className={styles.wfName}>{t('playbooks.clisButton')}</span>
+              </button>
               {Object.entries(s.routes).map(([rid, route]) => (
                 <button
                   key={rid}

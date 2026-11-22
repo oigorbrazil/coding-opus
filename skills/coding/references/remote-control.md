@@ -79,7 +79,11 @@ de reiniciar o computador. O comando stop para o servidor, enquanto as tarefas t
 vida próprio. Interrompa-as individualmente antes se também quiser encerrar as execuções.
 Nenhum agendamento de inicialização é instalado sem pedido do usuário.
 
-O painel oferece conversas novas, acompanhamento, interrupção, retomada ociosa e troca de IA.
+O painel abre na lista de tarefas, com checagens pendentes e tarefas em execução antes das
+recentes. **Nova tarefa** abre o formulário. Toque numa tarefa para acompanhar o status, ver a
+resposta ou continuar a conversa. A saída técnica fica em uma seção recolhível.
+O topo mostra a conexão e o horário da última leitura. Na reconexão, o painel atualiza a
+tarefa aberta e preserva o pedido que estiver sendo escrito.
 O painel exibe tarefas de projetos autorizados no servidor. Quando uma execução aguarda checagem, a tela
 mostra a pergunta e permite registrar o resultado. Tarefas de escrita respeitam `allow_write` e
 podem começar numa worktree separada quando o projeto usa Git.

@@ -1735,3 +1735,24 @@ button.select {
   padding-left: 20px;
   overflow-wrap: anywhere;
 }
+
+.cliRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cliText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cliMeta {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}

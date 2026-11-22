@@ -93,6 +93,12 @@ class EditorState:
         except (OSError, orchestrate.PlanError) as error:
             return {"ok": False, "error": str(error)}
 
+    def clis(self) -> Dict[str, Any]:
+        try:
+            return {"ok": True, "clis": orchestrate.detect_clis()}
+        except (OSError, orchestrate.PlanError) as error:
+            return {"ok": False, "error": str(error)}
+
     def usage(self) -> Dict[str, Any]:
         try:
             _, settings = orchestrate.loaded_playbooks(self.policy_path)
@@ -174,6 +180,8 @@ def make_handler(state: EditorState, port: int):
                     self._json(200, state.playbooks())
                 elif path == "/api/models":
                     self._json(200, state.models())
+                elif path == "/api/clis":
+                    self._json(200, state.clis())
                 elif path == "/api/accounts":
                     self._json(200, state.accounts())
                 elif path == "/api/usage":

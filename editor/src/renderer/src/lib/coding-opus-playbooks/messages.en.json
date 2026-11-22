@@ -543,5 +543,22 @@
   "playbooks.copyName": "Copy of {name}",
   "playbooks.duplicate": "Duplicate",
   "playbooks.deletePlaybook": "Delete playbook",
-  "playbooks.deleteConfirm": "Confirm deleting {name}"
+  "playbooks.deleteConfirm": "Confirm deleting {name}",
+  "playbooks.clisButton": "Detect CLIs",
+  "playbooks.clisTitle": "Agent CLIs on this computer",
+  "playbooks.clisHint": "Looks for the built-in agents and for CLIs that join as custom adapters. Adding one only lists it as a provider; no playbook or family uses it until you pick it.",
+  "playbooks.clisChecking": "Looking for CLIs...",
+  "playbooks.clisUnsupported": "This editor cannot look for CLIs; run orchestrate.py probe --all.",
+  "playbooks.clisInstalled": "Installed",
+  "playbooks.clisConfigured": "Already a provider",
+  "playbooks.clisAddable": "Not a provider yet",
+  "playbooks.clisNeedsAdapter": "Needs an adapter first: ask the lead to set it up from the CLI's --help",
+  "playbooks.clisLoggedIn": "logged in",
+  "playbooks.clisLoggedOut": "not logged in",
+  "playbooks.clisLoginUnknown": "login not checked",
+  "playbooks.clisAdd": "Add",
+  "playbooks.clisAdded": "Added: {names}. It is saved like any other edit.",
+  "playbooks.clisMissing": "Not found: {names}.",
+  "playbooks.clisAddHint": "Install a CLI and detect again to see it here.",
+  "playbooks.clisRecheck": "Detect again"
 }
