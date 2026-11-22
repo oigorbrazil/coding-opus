@@ -1023,6 +1023,9 @@ export function resolvePhase(s: PlaybooksState, p: Phase, c: Context): Resolutio
 }
 
 export function phaseAlts(s: PlaybooksState, p: Phase): Alt[] {
+  if (p.who === 'lead' && s.previewProvider && phaseOwner(s, p)?.id === s.wf) {
+    return []
+  }
   const base = phaseBase(s, p)
   const alts: Alt[] = []
   ;(p.rules ?? []).forEach((rule, i) => {

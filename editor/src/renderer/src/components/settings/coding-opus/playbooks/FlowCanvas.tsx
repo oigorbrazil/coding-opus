@@ -1,5 +1,5 @@
 /* oxlint-disable max-lines -- ported as-is from Coding Agent 1; split when this editor is next reworked. */
-import { Maximize2, Minus, Plus } from 'lucide-react'
+import { Maximize2, Minus, Plus, UserRound } from 'lucide-react'
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { TFunction } from '@/lib/coding-opus-playbooks/i18n'
@@ -129,7 +129,10 @@ export function Role({ n, graph }: { n: RoleNode; graph: FlowGraph }) {
           : 'border'
   const { switched, stuck, chosen } = n.resolved
   const planned = n.resolved.planned
+  const currentChat = n.lead && s.previewProvider !== null
+  const subtitle = currentChat ? t('playbooks.leadCurrentChat') : modelSubtitle(s, planned)
   const fallbackOn =
+    !currentChat &&
     reached &&
     (switched || Boolean(n.resolved.spent) || Boolean(chosen && isProblemCond(s, chosen.cond)))
   const price = n.lead ? null : modelPrice(planned.provider, planned.model)
@@ -138,7 +141,7 @@ export function Role({ n, graph }: { n: RoleNode; graph: FlowGraph }) {
     note = t(
       n.resolved.previewUnsupported ? 'playbooks.previewUnsupported' : 'playbooks.noProviderLeft'
     )
-  } else if (reached && chosen && !isProblemCond(s, chosen.cond)) {
+  } else if (!currentChat && reached && chosen && !isProblemCond(s, chosen.cond)) {
     note = condShortText(s, t, chosen.cond)
   }
   return (
@@ -154,14 +157,18 @@ export function Role({ n, graph }: { n: RoleNode; graph: FlowGraph }) {
           rx={4}
           strokeWidth={selected ? 2 : 1.3}
         />
-        <SvgProviderMark
-          id={planned.provider}
-          x={n.x + 13}
-          y={n.y + 19}
-          size={16}
-          faded={fallbackOn}
-        />
-        {planned.via ? (
+        {currentChat ? (
+          <UserRound x={n.x + 13} y={n.y + 19} size={16} color="var(--fg-muted)" aria-hidden />
+        ) : (
+          <SvgProviderMark
+            id={planned.provider}
+            x={n.x + 13}
+            y={n.y + 19}
+            size={16}
+            faded={fallbackOn}
+          />
+        )}
+        {!currentChat && planned.via ? (
           <SvgProviderMark
             id={planned.via}
             x={n.x + 25}
@@ -191,8 +198,8 @@ export function Role({ n, graph }: { n: RoleNode; graph: FlowGraph }) {
           fontSize={12}
           textDecoration={fallbackOn ? 'line-through' : undefined}
         >
-          <title>{modelSubtitle(s, planned)}</title>
-          {trunc(modelSubtitle(s, planned), 30)}
+          <title>{subtitle}</title>
+          {trunc(subtitle, 30)}
         </text>
         {price ? (
           <text

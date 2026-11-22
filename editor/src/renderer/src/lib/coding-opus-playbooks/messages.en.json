@@ -74,6 +74,7 @@
   "playbooks.scenarioReset": "Reset scenario",
   "playbooks.groupStrategies": "Strategies",
   "playbooks.previewProvider": "Playbook provider",
+  "playbooks.leadCurrentChat": "Current chat",
   "playbooks.previewUnsupported": "Step unavailable on this provider",
   "playbooks.groupRouting": "Task routing",
   "playbooks.groupProviders": "Providers",

@@ -189,6 +189,13 @@ function Trace({ graph }: { graph: FlowGraph }) {
     <Section title={t('playbooks.traceTitle', { scenario })}>
       <div className={styles.trace}>
         {roles.map((n) => {
+          if (n.lead && s.previewProvider !== null) {
+            return (
+              <div key={n.id}>
+                <b>{n.title}</b> · {t('playbooks.leadCurrentChat')}
+              </div>
+            )
+          }
           const { final, base, chosen, switched, stuck, spent, locked, previewUnsupported } =
             n.resolved
           const reasons: ReactNode[] = []

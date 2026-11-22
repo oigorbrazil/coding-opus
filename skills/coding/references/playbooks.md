@@ -183,8 +183,9 @@ A playbook lists `phases`. Each phase is one role:
 
 Use the provider selector at the top of the editor to see that provider's strategies in the
 sidebar and preview its models in the flow. Codex and the other configured non-Claude providers
-share the `family: other` steps. A step is marked unavailable if the provider cannot run it or the
-selected profile assigns it a Claude model. The selector is for previewing and editing the flow.
+share the `family: other` steps. The preview shows the selected provider's models on worker steps
+and labels lead steps as **Current chat**. A worker step is marked unavailable if the provider cannot
+run it or the selected profile assigns a Claude model to an `other` playbook.
 
 In a chat, choose the playbook and provider when making the request. The `family: claude` variant
 runs its workers through Claude Code. The `family: other` variant uses Codex or another configured

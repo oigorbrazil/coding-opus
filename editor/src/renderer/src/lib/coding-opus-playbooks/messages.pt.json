@@ -74,6 +74,7 @@
   "playbooks.scenarioReset": "Restaurar cenário",
   "playbooks.groupStrategies": "Estratégias",
   "playbooks.previewProvider": "Provedor dos playbooks",
+  "playbooks.leadCurrentChat": "IA do chat atual",
   "playbooks.previewUnsupported": "Etapa indisponível neste provedor",
   "playbooks.groupRouting": "Roteamento de tarefas",
   "playbooks.groupProviders": "Provedores",

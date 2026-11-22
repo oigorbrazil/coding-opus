@@ -22,7 +22,11 @@ vi.mock('./i18n', () => ({ useT: () => (key: string) => key }))
 vi.mock('@/lib/agent-catalog', () => ({ AgentIcon: () => null }))
 
 const text = `version: 1
-providers: [claude, codex, opencode]
+providers: [claude, codex, opencode, agy]
+tiers:
+  strong:
+    codex: { model: gpt-6-astra, effort: high }
+    agy: { model: gemini-3.8-flash-high }
 adapters:
   opencode:
     command: opencode
@@ -41,6 +45,10 @@ playbooks:
     phases:
       - id: plan
         who: lead
+        tier: strong
+        provider: codex
+        rules: [{ if: deep, use: { provider: codex } }]
+      - id: build
         tier: strong
 `
 
@@ -77,6 +85,7 @@ const savedProfile = () =>
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   vi.useRealTimers()
 })
 
@@ -85,6 +94,19 @@ it('opens a provider with structured adapter verification details', () => {
   click('OpenCode 3')
   expect(screen.getByText('opencode run --format json')).toBeDefined()
   expect(screen.getByText('opencode run --help · 2026-11-09')).toBeDefined()
+})
+
+it('previews only the selected provider and labels lead phases as the current chat', () => {
+  vi.spyOn(SVGElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1000, 700))
+  const { container } = mount()
+  click('playbooks.previewProvider')
+  fireEvent.click(screen.getByRole('option', { name: 'Antigravity' }))
+
+  const canvas = container.querySelector('svg[class*=canvas]')
+  expect(canvas?.textContent).toContain('playbooks.leadCurrentChat')
+  expect(canvas?.textContent).toContain('Antigravity · gemini-3.8-flash-high')
+  expect(canvas?.textContent).not.toContain('gpt-6-astra')
+  expect(save).not.toHaveBeenCalled()
 })
 
 it('persists undo during an in-flight save, then redoes the edit', async () => {
