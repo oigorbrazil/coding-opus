@@ -1,8 +1,8 @@
-import { Check, Copy } from 'lucide-react'
+import { Check, Copy, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import {
-  createPlaybooksState,
-  modelsOf
+  activeOrder,
+  createPlaybooksState
 } from '../../src/renderer/src/lib/coding-opus-playbooks/state'
 import { AiMemoryContinuation } from './AiMemoryContinuation'
 import { continuationPrompt } from './continuation-prompt'
@@ -10,16 +10,18 @@ import { localize as t, type ConversationDetail } from './knowledge-model'
 import { readEditorPlaybooks } from './skill-server-api'
 import styles from './Knowledge.module.css'
 
-type DestinationGroup = { id: string; label: string; models: string[] }
+type Destination = { id: string; label: string }
 
 export function ConversationContinuation({
   id,
-  conversation
+  conversation,
+  onClose
 }: {
   id: string
   conversation: ConversationDetail
+  onClose: () => void
 }) {
-  const [groups, setGroups] = useState<DestinationGroup[]>([])
+  const [providers, setProviders] = useState<Destination[]>([])
   const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'unavailable'>('loading')
   const [selected, setSelected] = useState('')
   const [custom, setCustom] = useState('')
@@ -33,14 +35,12 @@ export function ConversationContinuation({
       .then(({ text }) => {
         const catalog = createPlaybooksState(text)
         if (!controller.signal.aborted) {
-          setGroups(
-            Object.entries(catalog.catalog)
-              .map(([provider, definition]) => ({
-                id: provider,
-                label: definition.label,
-                models: modelsOf(catalog, provider)
-              }))
-              .filter((group) => group.models.length)
+          // The providers set up in the playbooks, in the active profile's order.
+          setProviders(
+            activeOrder(catalog).map((provider) => ({
+              id: provider,
+              label: catalog.catalog[provider]?.label ?? provider
+            }))
           )
           setCatalogState('ready')
         }
@@ -74,8 +74,20 @@ export function ConversationContinuation({
       className={`${styles.noteForm} ${styles.continuation}`}
       aria-label={t('Continuar em', 'Continue in')}
     >
+      <div className={styles.continuationHead}>
+        <h2>{t('Continuar em outra IA', 'Continue in another AI')}</h2>
+        <button
+          type="button"
+          className={styles.iconButton}
+          aria-label={t('Fechar', 'Close')}
+          title={t('Fechar', 'Close')}
+          onClick={onClose}
+        >
+          <X size={15} />
+        </button>
+      </div>
       <label>
-        <span id={`${id}-destination`}>{t('Modelo de destino', 'Destination model')}</span>
+        <span id={`${id}-destination`}>{t('IA de destino', 'Destination AI')}</span>
         <select
           aria-labelledby={`${id}-destination`}
           value={selected}
@@ -83,32 +95,28 @@ export function ConversationContinuation({
         >
           <option value="" disabled>
             {catalogState === 'loading'
-              ? t('Carregando modelos…', 'Loading models…')
-              : t('Selecione um modelo', 'Choose a model')}
+              ? t('Carregando provedores…', 'Loading providers…')
+              : t('Escolha um provedor', 'Choose a provider')}
           </option>
-          {groups.map((group) => (
-            <optgroup key={group.id} label={group.label}>
-              {group.models.map((model) => (
-                <option key={model} value={`${group.label} · ${model}`}>
-                  {group.label} · {model}
-                </option>
-              ))}
-            </optgroup>
+          {providers.map((provider) => (
+            <option key={provider.id} value={provider.label}>
+              {provider.label}
+            </option>
           ))}
-          <option value="custom">{t('Outro modelo…', 'Other model…')}</option>
+          <option value="custom">{t('Outra IA…', 'Other AI…')}</option>
         </select>
       </label>
       {catalogState === 'unavailable' && selected !== 'custom' ? (
         <p className={styles.muted}>
           {t(
-            'A lista de modelos está indisponível. Use Outro modelo para digitar o nome.',
-            'The model list is unavailable. Choose Other model to enter a name.'
+            'A lista de provedores está indisponível. Use Outra IA para digitar o nome.',
+            'The provider list is unavailable. Choose Other AI to enter a name.'
           )}
         </p>
       ) : null}
       {selected === 'custom' ? (
         <label>
-          {t('Nome do modelo', 'Model name')}
+          {t('Nome da IA', 'AI name')}
           <input
             value={custom}
             maxLength={160}
@@ -147,8 +155,8 @@ export function ConversationContinuation({
                     'Text selected. Use the copy command.'
                   )
                 : t(
-                    'Cole no chat com o modelo escolhido.',
-                    'Paste into a chat with the chosen model.'
+                    'Cole num chat da IA escolhida.',
+                    'Paste into a chat with the chosen AI.'
                   )}
             </span>
           </div>

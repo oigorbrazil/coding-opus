@@ -1,5 +1,5 @@
 import { ArrowUpRight } from 'lucide-react'
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { ConversationContinuation } from './ConversationContinuation'
 import { ConversationSummary } from './ConversationSummary'
 import { ConversationTitle } from './ConversationTitle'
@@ -51,6 +51,7 @@ export function ConversationReading({
   onDeleted: () => void
 }) {
   const [view, setView] = useState<'summary' | 'messages'>('summary')
+  const continueButton = useRef<HTMLButtonElement>(null)
   const [olderPages, setOlderPages] = useState<{
     head: number
     page: number
@@ -156,6 +157,7 @@ export function ConversationReading({
           </button>
         </div>
         <button
+          ref={continueButton}
           type="button"
           className={styles.button}
           aria-expanded={continuing}
@@ -167,7 +169,14 @@ export function ConversationReading({
         </button>
       </div>
       {continuing ? (
-        <ConversationContinuation id={continuationId} conversation={conversation} />
+        <ConversationContinuation
+          id={continuationId}
+          conversation={conversation}
+          onClose={() => {
+            setContinuing(false)
+            continueButton.current?.focus()
+          }}
+        />
       ) : null}
       {view === 'summary' ? (
         <ConversationSummary
