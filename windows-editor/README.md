@@ -3,7 +3,9 @@
 Source of `Coding Opus.exe`, the small WinForms window that shows the editor page through the
 Microsoft WebView2 runtime. `skills/coding/scripts/desktop_editor.py` unpacks the built package,
 `skills/coding/assets/windows-editor.zip`, into `%LOCALAPPDATA%\Coding Opus\Editor` and registers
-the Start menu entry; the app starts `editor_server.py` from its `launcher.json`.
+the Start menu entry; the app starts `editor_server.py` from its `launcher.json`. No desktop
+shortcut is created, but an existing desktop `Coding Opus.lnk` that points at an earlier release is
+moved to the new one on each update (one pointing anywhere else is left alone).
 
 Build on Windows with the .NET Framework compiler and the official WebView2 package
 (`Microsoft.Web.WebView2` 1.0.4314.35, checked by SHA-256):

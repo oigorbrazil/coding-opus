@@ -247,6 +247,68 @@ def registration():
                 msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
 
 
+READ_SHORTCUT = r"""
+$ErrorActionPreference = 'Stop'
+$desktop = $env:CODING_OPUS_DESKTOP
+if (-not $desktop) { $desktop = [Environment]::GetFolderPath('Desktop') }
+$path = Join-Path $desktop 'Coding Opus.lnk'
+if (Test-Path -LiteralPath $path) {
+    $path
+    (New-Object -ComObject WScript.Shell).CreateShortcut($path).TargetPath
+}
+"""
+
+WRITE_SHORTCUT = r"""
+$ErrorActionPreference = 'Stop'
+$link = (New-Object -ComObject WScript.Shell).CreateShortcut($env:CODING_OPUS_LINK)
+$link.TargetPath = $env:CODING_OPUS_BINARY
+$link.WorkingDirectory = [IO.Path]::GetDirectoryName($env:CODING_OPUS_BINARY)
+$link.IconLocation = $env:CODING_OPUS_BINARY + ',0'
+$link.Save()
+"""
+
+
+def powershell(script, **env):
+    result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                            capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+                            env={**os.environ, **env}, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if result.returncode:
+        raise OSError(result.stderr.strip() or f"powershell exited with {result.returncode}")
+    return result.stdout.splitlines()
+
+
+def same_path(first, second):
+    try:
+        return os.path.samefile(first, second)
+    except OSError:
+        return os.path.normcase(os.path.abspath(first)) == os.path.normcase(os.path.abspath(second))
+
+
+def refresh_desktop_shortcut(binary, root, desktop=None):
+    """Point an existing desktop "Coding Opus" shortcut at the new release, like the Start menu one.
+
+    The installer never creates a desktop shortcut. One the user made for an earlier release would
+    otherwise keep opening that release (or nothing, once old releases are cleaned up). A shortcut
+    with that name that points anywhere else is left alone. Best effort: a failure never stops the
+    installation. Returns "absent", "foreign", "current", "updated" or "failed".
+    """
+    extra = {"CODING_OPUS_DESKTOP": str(desktop)} if desktop is not None else {}
+    try:
+        found = [line.strip() for line in powershell(READ_SHORTCUT, **extra) if line.strip()]
+        if not found:
+            return "absent"
+        link, target = found[0], (found[1] if len(found) > 1 else "")
+        target_path = Path(target)
+        if not target or target_path.name.lower() != NAME.lower() or not same_path(target_path.parent.parent, root):
+            return "foreign"
+        if same_path(target_path, binary):
+            return "current"
+        powershell(WRITE_SHORTCUT, CODING_OPUS_LINK=link, CODING_OPUS_BINARY=str(binary))
+        return "updated"
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return "failed"
+
+
 def install(policy, *, open_on_first_install=False):
     open_on_completion = open_on_first_install and interactive() and not installed()
     package = ASSET.read_bytes()
@@ -266,6 +328,7 @@ def install(policy, *, open_on_first_install=False):
     config = {"python": sys.executable, "script": str(SCRIPT.with_name("editor_server.py")), "policy": str(policy)}
     atomic_write(target / "launcher.json", json.dumps(config, ensure_ascii=False).encode("utf-8"))
     command(binary, "--register")
+    refresh_desktop_shortcut(binary, root)
     atomic_write(root / "active", release.encode("ascii"))
     if open_on_completion:
         try:

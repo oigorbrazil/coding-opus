@@ -100,3 +100,53 @@ class UnixLauncherTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(os.name == "nt", "Windows shortcuts")
+class DesktopShortcutTest(unittest.TestCase):
+    """The installer never creates a desktop shortcut, but keeps an existing one on the current release."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name) / "Editor"
+        self.desktop = Path(temp.name) / "Desktop"
+        self.desktop.mkdir(parents=True)
+        self.old = self.root / "old" / desktop_editor.NAME
+        self.new = self.root / "new" / desktop_editor.NAME
+        for binary in (self.old, self.new):
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"")
+        self.link = self.desktop / "Coding Opus.lnk"
+
+    def shell(self, script, **env):
+        import subprocess
+        return subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                              capture_output=True, encoding="utf-8", check=True,
+                              env={**os.environ, **env}).stdout.strip()
+
+    def make_link(self, target):
+        self.shell("$l=(New-Object -ComObject WScript.Shell).CreateShortcut($env:LINK);"
+                   "$l.TargetPath=$env:TARGET;$l.Save()", LINK=str(self.link), TARGET=str(target))
+
+    def target(self):
+        return self.shell("(New-Object -ComObject WScript.Shell).CreateShortcut($env:LINK).TargetPath",
+                          LINK=str(self.link))
+
+    def test_no_shortcut_is_created(self):
+        self.assertEqual(desktop_editor.refresh_desktop_shortcut(self.new, self.root, self.desktop), "absent")
+        self.assertFalse(self.link.exists())
+
+    def test_an_old_release_shortcut_follows_the_update(self):
+        self.make_link(self.old)
+        self.assertEqual(desktop_editor.refresh_desktop_shortcut(self.new, self.root, self.desktop), "updated")
+        self.assertTrue(os.path.samefile(self.target(), self.new))
+        self.assertEqual(desktop_editor.refresh_desktop_shortcut(self.new, self.root, self.desktop), "current")
+
+    def test_a_shortcut_to_something_else_is_left_alone(self):
+        other = self.root.parent / "Other" / desktop_editor.NAME
+        other.parent.mkdir()
+        other.write_bytes(b"")
+        self.make_link(other)
+        self.assertEqual(desktop_editor.refresh_desktop_shortcut(self.new, self.root, self.desktop), "foreign")
+        self.assertTrue(os.path.samefile(self.target(), other))
