@@ -95,6 +95,8 @@ export type FlowEdge = {
   subject?: CostSubject
   lane?: boolean
   climb?: boolean
+  /** "Otherwise" to a card already placed beside an earlier question: go around the questions. */
+  around?: boolean
 }
 
 export type Simulation = {
@@ -429,8 +431,9 @@ function routingGraph(s: PlaybooksState, t: TFunction, wf: RoutingWorkflow, c: C
           out: src.out,
           fromSide: src.side,
           to: cardId,
-          toSide: placed[rule.role] === 'spine' ? 'top' : 'bottom',
-          label: src.label
+          toSide: 'top',
+          label: src.label,
+          around: placed[rule.role] === 'side'
         })
       )
       prev = placed[rule.role] === 'spine' ? [{ id: cardId, side: 'bottom' }] : []
@@ -676,9 +679,16 @@ export function buildGraph(s: PlaybooksState, t: TFunction, wf: Workflow): FlowG
   })
   const byId = Object.fromEntries(nodes.map((n) => [n.id, n]))
   const right = Math.max(...nodes.map((n) => n.x + n.w))
+  const left = Math.min(...nodes.map((n) => n.x)) - 40
   let lane = 0
+  let leftLane = 0
+  // In task routing, returns to the end share one channel just right of the cards: it reads as a
+  // single line that collects them and leaves room past it for each card's alternative model.
+  // Playbooks keep one lane per return, since a failure return is drawn differently.
+  const laneX = (edge: FlowEdge) =>
+    wf.kind === 'playbook' ? right + 40 + (edge.lane ? lane++ * 14 : 0) : right + 16
   const wires = edges.map((edge) =>
-    edge.from === 'start' ? [] : route(edge, byId, right + 40 + (edge.lane ? lane++ * 14 : 0))
+    edge.from === 'start' ? [] : route(edge, byId, laneX(edge), left - (edge.around ? leftLane++ * 14 : 0))
   )
   addGhosts(s, nodes, wires)
   for (const node of nodes) {
@@ -763,15 +773,24 @@ export function rounded(points: Point2[], radius = 26): string {
   return `${d} L${f(lx)} ${f(ly)}`
 }
 
-function route(e: FlowEdge, byId: FlowGraph['byId'], laneX: number): Point2[] {
+function route(e: FlowEdge, byId: FlowGraph['byId'], laneX: number, leftX: number): Point2[] {
   const a = byId[e.from]
   const b = byId[e.to]
   const p1 = port(a, e.fromSide)
   const p2 = port(b, e.toSide)
   if (e.lane) {
-    const [bx, by] = port(a, 'bottom')
+    // Leave right of center, so arrows that enter the card from below keep the middle.
+    const bx = a.cx + a.w / 4
+    const by = a.y + a.h
     const below = by + 26
     return [[bx, by], [bx, below], [laneX, below], [laneX, p2[1]], p2]
+  }
+  if (e.around) {
+    // Down past the question, left of every question, then over the top into the card: never
+    // through a diamond or its text.
+    const below = p1[1] + 20
+    const over = p2[1] - 26
+    return [p1, [p1[0], below], [leftX, below], [leftX, over], [p2[0], over], p2]
   }
   if (e.fromSide === 'bottom' && e.toSide === 'right') {
     return [p1, [p1[0], p2[1]], p2]
