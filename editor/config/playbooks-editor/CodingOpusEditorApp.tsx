@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Bell, BookOpen, Layers, MessagesSquare } from 'lucide-react'
+import { Bell, BookOpen, Layers, MessagesSquare, Radio } from 'lucide-react'
 import { PlaybooksPage } from '../../src/renderer/src/components/settings/coding-opus/playbooks/PlaybooksPage'
 import { KnowledgePage } from './KnowledgePage'
 import { RemindersPage } from './RemindersPage'
 import { StartupSplash } from './StartupSplash'
 import { localize as t } from './knowledge-model'
+import { RemotePage } from './RemotePage'
 import styles from './Knowledge.module.css'
 
 const STAMP_POLL_MS = 3000
@@ -12,7 +13,8 @@ const APP_VIEWS = [
   { view: 'playbooks', name: 'Playbooks', icon: Layers },
   { view: 'notes', name: 'Second Brain', icon: BookOpen },
   { view: 'memory', name: t('Memória', 'Memory'), icon: MessagesSquare },
-  { view: 'reminders', name: t('Lembretes', 'Reminders'), icon: Bell }
+  { view: 'reminders', name: t('Lembretes', 'Reminders'), icon: Bell },
+  { view: 'remote', name: t('Controle remoto', 'Remote control'), icon: Radio }
 ] as const
 
 const stampApi = () =>
@@ -142,6 +144,7 @@ export function CodingOpusEditorApp(): React.JSX.Element {
           />
         </div>
         {view === 'reminders' ? <RemindersPage onLoadSettled={onLoadSettled} /> : null}
+        {view === 'remote' ? <RemotePage onLoadSettled={onLoadSettled} /> : null}
         {view === 'notes' || view === 'memory' ? (
           <KnowledgePage
             key={view}

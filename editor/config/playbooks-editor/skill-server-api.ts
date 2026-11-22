@@ -48,6 +48,34 @@ export async function libraryCall<T>(
 export const readEditorPlaybooks = (signal = AbortSignal.timeout(15000)) =>
   call<CodingOpusPlaybooks>('/api/playbooks', { signal })
 
+export async function openRemotePanel() {
+  const result = await call<{ status: 'opened' | 'setup-required' | 'unavailable' }>(
+    '/api/remote/open',
+    { method: 'POST', body: '{}' }
+  )
+  return result.status
+}
+
+export type RemoteStatus = {
+  configured: boolean
+  running: boolean
+  port?: number
+  allow_write: boolean
+  panel: boolean
+  projects: { key: string; path: string; exists: boolean }[]
+}
+
+type RemoteResult = { ok: true; remote: RemoteStatus } | { ok: false; error: string }
+
+export const readRemote = () => call<RemoteResult>('/api/remote')
+
+export const remoteAction = (body: {
+  action: 'start' | 'stop' | 'add' | 'remove' | 'write'
+  path?: string
+  key?: string
+  allowWrite?: boolean
+}) => call<RemoteResult>('/api/remote', { method: 'POST', body: JSON.stringify(body) })
+
 /** The `window.api.codingOpus` surface the editor reads, served by the skill's local server. */
 export function createCodingOpusApi() {
   return {

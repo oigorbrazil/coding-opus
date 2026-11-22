@@ -61,6 +61,7 @@
   background: color-mix(in srgb, var(--primary) 90%, var(--fg));
 }
 
+.navigation button:disabled,
 .library button:disabled,
 .library input:disabled {
   cursor: default;
@@ -704,4 +705,87 @@
     margin-bottom: 12px;
     padding-inline: 0;
   }
+}
+
+.remoteSection {
+  display: grid;
+  gap: 10px;
+  padding: 4px 0 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.remoteSection + .remoteSection {
+  padding-top: 18px;
+}
+
+.remoteSection h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.remoteSection p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.remoteSection > .button {
+  justify-self: start;
+}
+
+.remoteProjects {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.remoteProjects li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.remoteProjects li > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.remoteProjects small {
+  overflow-wrap: anywhere;
+}
+
+.remoteAdd {
+  display: grid;
+  gap: 6px;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+.remoteAdd > div {
+  display: flex;
+  gap: 8px;
+}
+
+.remoteAdd input {
+  flex: 1;
+  min-width: 0;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.remoteCheck {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
 }

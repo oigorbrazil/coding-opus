@@ -25,9 +25,30 @@ em reconfigurações. `--allow-write` habilita tarefas que alteram os projetos. 
 precisa selecionar o modo write. O painel inicia em somente leitura.
 
 O servidor escuta somente em 127.0.0.1, padrão porta 8769. O painel fica em /, o MCP em /mcp.
-Todas as ferramentas exigem `Authorization: Bearer <chave>`. A página inicial é pública e não
-mostra informações dos projetos antes de autenticar. O painel conserva a chave só na memória
-da aba. Host e Origin são verificados, sem CORS aberto.
+Todas as ferramentas exigem `Authorization: Bearer <chave>`: a chave mestra do config.json ou
+uma chave de aparelho. A página inicial é pública e não mostra informações dos projetos antes de
+autenticar. Host e Origin são verificados, sem CORS aberto.
+
+### Pareamento e aparelhos
+
+O usuário não precisa copiar a chave mestra. Na aba **Controle remoto** do editor da Coding Opus
+(`orchestrate.py editor`), **Abrir painel neste computador** liga o serviço, gera um código de
+pareamento de computador e abre `http://127.0.0.1:<porta>/#pair=<código>`. O painel troca o
+código por uma chave própria do aparelho, guardada no navegador, e remove o código da URL.
+
+- Códigos têm 8 caracteres, valem 5 minutos e só uma vez. Depois de 20 códigos errados em 10
+  minutos o pareamento bloqueia por 10 minutos (HTTP 429).
+- Chaves de aparelho ficam só como hash sha256 em `devices.json`. Tipos: `pc` (pode gerar QR
+  para celulares, listar e revogar aparelhos) e `phone` (só usa o painel e o MCP).
+- No painel do computador, **Gerar QR para o celular** mostra um QR de `<panel_url>#pair=<código>`.
+  Revogar um computador revoga os celulares pareados por ele. Uma chave revogada recebe 401 e o
+  painel pede um novo QR.
+- Rotas: `POST /pair` (sem autenticação, `{code, name}`), `POST /pair/new` (`{kind}`),
+  `GET /devices` e `POST /devices/revoke` (`{id}`), as três últimas com chave mestra ou `pc`.
+
+A mesma aba lista os projetos liberados, avisa pasta inexistente, adiciona pasta pelo caminho
+completo, remove projetos, liga a escrita e liga/desliga o serviço. Mudanças reiniciam o serviço
+se ele estiver ligado. Faça essas mudanças só a pedido do usuário.
 
 ## Acesso pelo celular e outro computador
 
@@ -44,6 +65,12 @@ Isso resulta em `https://nome-do-computador.sua-rede.ts.net/coding-opus/` para o
 existentes. Adicione o origin HTTPS exato ao setup. Se o tailnet exigir habilitar Serve na
 administração, informe o link de aprovação ao usuário e mantenha o servidor pronto localmente.
 Não abra portas do roteador, habilite Funnel público, altere ACLs ou publique na internet sem pedido.
+
+No painel do computador, **Gerar QR para o celular** mostra os passos e um QR de uso único que
+já conecta o celular, sem digitar chave. Se houver um único origin HTTPS do
+Tailscale, o endereço padrão termina em `/coding-opus/`. Para outra rota ou mais de um origin,
+passe a URL HTTPS completa, sem query, fragmento ou chave, em `setup --panel-url <url>` e inclua
+sua origem em `--origin`.
 
 O celular precisa de Tailscale conectado, ou de outra conexão privada configurada. Um conector
 MCP que rode na nuvem do ChatGPT/Claude não acessa automaticamente a rede privada do usuário.

@@ -2,6 +2,9 @@
 """Authenticated Streamable HTTP MCP and mobile control panel for Coding Opus."""
 
 import argparse
+import datetime as dt
+import hashlib
+from html import escape
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import socketserver
@@ -10,12 +13,13 @@ import os
 from pathlib import Path
 import re
 import secrets
+import socket
 import subprocess
 import sys
 import threading
 import time
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from brain import brain_path
 from chat_memory import atomic_text
@@ -23,6 +27,136 @@ from remote_jobs import RemoteError, RemoteJobs, remote_home, runner
 
 PROTOCOLS = ("2025-11-25", "2025-06-18")
 MAX_BODY = 256 * 1024
+PAIR_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O or 1/I to misread
+PAIR_SECONDS = 300
+PAIR_FAILURES = 20  # wrong codes in PAIR_LOCK_SECONDS before pairing locks
+PAIR_LOCK_SECONDS = 600
+DEVICE_KINDS = ("pc", "phone")
+
+
+def token_hash(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+class Devices:
+    """Paired browsers. Each has its own token, stored only as a hash, and can be revoked alone.
+
+    A "pc" device was paired from a code the computer owner made with the master token (the Coding
+    Opus button); it may pair phones and list or revoke devices. A "phone" device only uses the panel.
+    Revoking a device also revokes every device it paired.
+    """
+
+    def __init__(self, home):
+        self.path = Path(home) / "devices.json"
+        self.lock = threading.Lock()
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            self.items = [item for item in data.get("devices", []) if isinstance(item, dict) and item.get("hash")]
+        except (OSError, ValueError, AttributeError):
+            self.items = []
+
+    def _save(self):
+        atomic_text(self.path, json.dumps({"version": 1, "devices": self.items}, indent=2, ensure_ascii=False))
+        if os.name != "nt":
+            self.path.chmod(0o600)
+
+    def check(self, token):
+        digest = token_hash(token)
+        with self.lock:
+            for item in self.items:
+                if hmac.compare_digest(item["hash"], digest):
+                    return dict(item)
+        return None
+
+    def create(self, name, kind, paired_by):
+        token = secrets.token_urlsafe(32)
+        stamp = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+        clean = re.sub(r"\s+", " ", str(name or "")).strip()[:60] or ("Computador" if kind == "pc" else "Celular")
+        item = {"id": secrets.token_hex(8), "name": clean, "kind": kind, "hash": token_hash(token),
+                "created": stamp, "paired_by": paired_by}
+        with self.lock:
+            if kind == "pc":
+                # The Coding Opus button pairs this computer again on every open; keep one entry for it.
+                self.items = [old for old in self.items if not (old["kind"] == "pc" and old["name"] == clean)]
+            self.items.append(item)
+            self._save()
+        return self.public(item), token
+
+    def revoke(self, device_id):
+        with self.lock:
+            gone, queue = set(), [device_id]
+            while queue:
+                current = queue.pop()
+                if current in gone:
+                    continue
+                gone.add(current)
+                queue += [item["id"] for item in self.items if item.get("paired_by") == current]
+            before = len(self.items)
+            self.items = [item for item in self.items if item["id"] not in gone]
+            if len(self.items) != before:
+                self._save()
+            return before - len(self.items)
+
+    @staticmethod
+    def public(item):
+        return {key: item.get(key) for key in ("id", "name", "kind", "created", "paired_by")}
+
+    def listed(self):
+        with self.lock:
+            return [self.public(item) for item in self.items]
+
+
+class Pairing:
+    """Single-use pairing codes that live in memory for PAIR_SECONDS."""
+
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.lock = threading.Lock()
+        self.codes = {}
+        self.failures = []
+        self.locked_until = 0.0
+
+    def new(self, kind, paired_by):
+        code = "".join(secrets.choice(PAIR_ALPHABET) for _ in range(8))
+        with self.lock:
+            now = self.clock()
+            self.codes = {key: value for key, value in self.codes.items() if value["expires"] > now}
+            self.codes[code] = {"kind": kind, "paired_by": paired_by, "expires": now + PAIR_SECONDS}
+        return code
+
+    def redeem(self, code):
+        """The code's entry, or None; raises RemoteError while too many wrong codes lock pairing."""
+        normalized = re.sub(r"[^A-Z0-9]", "", str(code or "").upper())
+        with self.lock:
+            now = self.clock()
+            if now < self.locked_until:
+                raise RemoteError("Muitas tentativas. Gere um novo QR no computador daqui a alguns minutos.")
+            entry = self.codes.pop(normalized, None)
+            if entry and entry["expires"] > now:
+                return entry
+            self.failures = [stamp for stamp in self.failures if stamp > now - PAIR_LOCK_SECONDS] + [now]
+            if len(self.failures) >= PAIR_FAILURES:
+                self.locked_until = now + PAIR_LOCK_SECONDS
+                self.failures = []
+            return None
+
+
+def private_panel_url(config):
+    origins = config.get("origins", [])
+    address = config.get("panel_url")
+    if address:
+        try:
+            url = urlsplit(address)
+            if (url.scheme == "https" and url.hostname and url.username is None
+                    and f"https://{url.netloc}" in origins and address.isascii()
+                    and not re.search(r"[\s\\?#]", address)):
+                return address
+        except ValueError:
+            pass
+        return ""
+    tailscale = [origin for origin in dict.fromkeys(origins)
+                 if re.fullmatch(r"https://[a-z0-9.-]+\.ts\.net", origin)]
+    return tailscale[0] + "/coding-opus/" if len(tailscale) == 1 else ""
 
 
 class LocalHTTPServer(ThreadingHTTPServer):
@@ -119,7 +253,10 @@ def rpc(jobs, message):
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-def handler(jobs, config):
+def handler(jobs, config, devices=None, pairing=None):
+    devices = devices or Devices(config.get("state_dir") or remote_home())
+    pairing = pairing or Pairing()
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
@@ -147,23 +284,97 @@ def handler(jobs, config):
                 return False
             return True
 
-        def authenticated(self):
+        def identity(self):
+            """{"kind": "master"} for the config token, the device for a paired token, else None."""
             value = self.headers.get("Authorization", "")
-            if not hmac.compare_digest(value.encode("utf-8"), ("Bearer " + config["token"]).encode("utf-8")):
+            if hmac.compare_digest(value.encode("utf-8"), ("Bearer " + config["token"]).encode("utf-8")):
+                return {"kind": "master", "id": None}
+            if value.startswith("Bearer ") and len(value) < 200:
+                return devices.check(value[7:])
+            return None
+
+        def authenticated(self, kinds=("master", "pc", "phone")):
+            who = self.identity()
+            if who is None:
                 self.reply(401)
-                return False
-            return True
+                return None
+            if who["kind"] not in kinds:
+                self.reply(403)
+                return None
+            return who
+
+        def json_body(self):
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 <= size <= 4096 or self.headers.get_content_type() != "application/json":
+                    return None
+                body = json.loads(self.rfile.read(size).decode("utf-8") or "{}")
+                return body if isinstance(body, dict) else None
+            except (ValueError, UnicodeError):
+                return None
+
+        def send_json(self, status, payload):
+            self.reply(status, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+
+        def pairing_routes(self):
+            """The /pair and /devices routes; True when this request was one of them."""
+            if self.path == "/pair":
+                body = self.json_body()
+                if body is None:
+                    self.reply(400)
+                    return True
+                try:
+                    entry = pairing.redeem(body.get("code"))
+                except RemoteError as error:
+                    self.send_json(429, {"error": str(error)})
+                    return True
+                if entry is None:
+                    self.send_json(400, {"error": "Código inválido ou expirado. Gere um novo QR no computador."})
+                    return True
+                device, token = devices.create(body.get("name"), entry["kind"], entry["paired_by"])
+                self.send_json(200, {"token": token, "device": device})
+                return True
+            if self.path == "/pair/new":
+                who = self.authenticated(("master", "pc"))
+                body = self.json_body() if who else None
+                if who is None:
+                    return True
+                kind = (body or {}).get("kind", "phone")
+                if kind not in DEVICE_KINDS or (who["kind"] == "pc" and kind != "phone"):
+                    self.reply(403)
+                    return True
+                self.send_json(200, {"code": pairing.new(kind, who["id"]), "expires_in": PAIR_SECONDS})
+                return True
+            if self.path == "/devices/revoke":
+                who = self.authenticated(("master", "pc"))
+                body = self.json_body() if who else None
+                if who is None:
+                    return True
+                if not body or not isinstance(body.get("id"), str):
+                    self.reply(400)
+                    return True
+                self.send_json(200, {"revoked": devices.revoke(body["id"])})
+                return True
+            return False
 
         def do_GET(self):
             if not self.trusted_request():
                 return
             path = urlparse(self.path).path
-            if path in ("/", "/index.html", "/notification-worker.js"):
+            if path in ("/", "/index.html", "/notification-worker.js", "/remote-qr.js"):
                 asset = Path(__file__).resolve().parent.parent / "assets"
-                if path == "/notification-worker.js":
-                    self.reply(200, (asset / "notification-worker.js").read_bytes(), "text/javascript; charset=utf-8")
+                if path in ("/notification-worker.js", "/remote-qr.js"):
+                    self.reply(200, (asset / path[1:]).read_bytes(), "text/javascript; charset=utf-8")
                 else:
-                    self.reply(200, (asset / "remote.html").read_bytes(), "text/html; charset=utf-8")
+                    host = urlparse("http://" + self.headers.get("Host", "")).hostname
+                    address = private_panel_url(config) if host in ("127.0.0.1", "localhost") else ""
+                    page = (asset / "remote.html").read_bytes().replace(
+                        b"__CODING_OPUS_REMOTE_PANEL_URL__", escape(address, quote=True).encode("utf-8"))
+                    self.reply(200, page, "text/html; charset=utf-8")
+            elif path == "/devices":
+                who = self.authenticated(("master", "pc"))
+                if who:
+                    self.send_json(200, {"devices": devices.listed(), "you": who["id"]})
             elif not self.authenticated():
                 return
             elif self.path == "/health":
@@ -177,7 +388,9 @@ def handler(jobs, config):
 
         def do_POST(self):
             self.close_connection = True
-            if not self.trusted_request() or not self.authenticated():
+            if not self.trusted_request() or self.pairing_routes():
+                return
+            if not self.authenticated(("master",) if self.path == "/_stop" else ("master", "pc", "phone")):
                 return
             if self.path == "/_stop":
                 self.reply(200, b'{"stopped":true}')
@@ -232,6 +445,10 @@ def setup(args):
         raise RemoteError("Cadastre pelo menos um projeto")
     config.update(port=args.port, brain=str(brain_path()), allow_write=args.allow_write,
                   origins=list(set(args.origin + [f"http://127.0.0.1:{args.port}", f"http://localhost:{args.port}"])))
+    if args.panel_url is not None:
+        config["panel_url"] = args.panel_url
+        if args.panel_url and not private_panel_url(config):
+            raise RemoteError("Use --panel-url com um endereço HTTPS sem chave e cadastre sua origem com --origin")
     atomic_text(path, json.dumps(config, indent=2, ensure_ascii=False))
     if os.name != "nt":
         path.chmod(0o600)
@@ -239,10 +456,107 @@ def setup(args):
                       "allow_write": config["allow_write"], "token": "stored in config.json; not printed"}, indent=2))
 
 
+# ------------------------------------------------- management from the local Coding Opus editor
+
+def read_config(home):
+    path = Path(home) / "config.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
+def write_config(home, config):
+    path = Path(home) / "config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_text(path, json.dumps(config, indent=2, ensure_ascii=False))
+    if os.name != "nt":
+        path.chmod(0o600)
+
+
+def ensure_config(home, port=8769):
+    """The config, created with a fresh master token and loopback origins when missing."""
+    config = read_config(home)
+    if config is None:
+        config = {"version": 1, "state_dir": str(Path(home)), "token": secrets.token_urlsafe(32), "projects": {},
+                  "port": port, "brain": str(brain_path()), "allow_write": False,
+                  "origins": [f"http://127.0.0.1:{port}", f"http://localhost:{port}"]}
+        write_config(home, config)
+    return config
+
+
+def project_key(path, taken):
+    base = re.sub(r"[^a-z0-9]+", "-", Path(path).name.lower()).strip("-")[:40] or "projeto"
+    key, number = base, 2
+    while key in taken:
+        key, number = f"{base}-{number}", number + 1
+    return key
+
+
+def manage_projects(home, action, path=None, key=None, allow_write=None):
+    """Add or remove a project, or turn writing on or off. Returns the public status."""
+    config = ensure_config(home)
+    if action == "add":
+        folder = Path(str(path or "")).expanduser()
+        if not str(path or "").strip() or not folder.is_absolute() or not folder.is_dir():
+            raise RemoteError("Escolha uma pasta existente, com o caminho completo.")
+        folder = folder.resolve()
+        if str(folder) in config["projects"].values():
+            raise RemoteError("Essa pasta já está liberada.")
+        config["projects"][project_key(folder, config["projects"])] = str(folder)
+    elif action == "remove":
+        if key not in config["projects"]:
+            raise RemoteError("Projeto não encontrado.")
+        del config["projects"][key]
+    elif action == "write":
+        config["allow_write"] = bool(allow_write)
+    else:
+        raise RemoteError("Ação desconhecida.")
+    write_config(home, config)
+    return remote_status(home)
+
+
+def remote_status(home):
+    config = read_config(home)
+    if config is None:
+        return {"configured": False, "running": False, "projects": [], "allow_write": False, "panel": False}
+    running = service_action(home, "status")["running"]
+    return {
+        "configured": True, "running": running, "port": config.get("port"),
+        "allow_write": bool(config.get("allow_write")), "panel": bool(private_panel_url(config)),
+        "projects": [{"key": key, "path": value, "exists": Path(value).is_dir()}
+                     for key, value in sorted(config.get("projects", {}).items())],
+    }
+
+
+def server_call(home, method, path, body=None):
+    """Call the running panel with the master token, from this computer only."""
+    config = read_config(home)
+    if config is None:
+        raise RemoteError("O controle remoto ainda não foi configurado.")
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    request = urllib.request.Request(f"http://127.0.0.1:{config['port']}{path}", data=data, method=method,
+                                     headers={"Authorization": "Bearer " + config["token"],
+                                              "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.load(response)
+    except (OSError, ValueError) as error:
+        raise RemoteError("O painel não respondeu. Ligue o controle remoto e tente de novo.") from error
+
+
+def restart_if_running(home):
+    if service_action(home, "status")["running"]:
+        service_action(home, "stop")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and service_action(home, "status")["running"]:
+            time.sleep(0.2)
+        service_action(home, "start")
+
+
 def service_action(home, command):
     config = json.loads((home / "config.json").read_text(encoding="utf-8"))
     def health():
         try:
+            # Windows waits out the whole timeout on a closed local port; a short probe answers "stopped" fast.
+            socket.create_connection(("127.0.0.1", config["port"]), timeout=0.5).close()
             request = urllib.request.Request(f"http://127.0.0.1:{config['port']}/health",
                                              headers={"Authorization": "Bearer " + config["token"]})
             with urllib.request.urlopen(request, timeout=2) as response:
@@ -288,6 +602,7 @@ def main():
     configure.add_argument("--project", action="append", default=[])
     configure.add_argument("--port", type=int, default=8769)
     configure.add_argument("--origin", action="append", default=[])
+    configure.add_argument("--panel-url", help="Endereço HTTPS completo do painel, sem chave, para o QR do celular")
     configure.add_argument("--allow-write", action="store_true")
     commands.add_parser("serve")
     for command in ("start", "stop", "status"):
@@ -303,7 +618,7 @@ def main():
     if not isinstance(config.get("token"), str) or len(config["token"]) < 32:
         raise RemoteError("Configuração sem token válido")
     jobs = RemoteJobs(config)
-    server = LocalHTTPServer(("127.0.0.1", config["port"]), handler(jobs, config))
+    server = LocalHTTPServer(("127.0.0.1", config["port"]), handler(jobs, config, Devices(args.home)))
     atomic_text(args.home / "server.json", json.dumps({"pid": os.getpid(), "process_start": runner.process_start_time(os.getpid()), "port": server.server_port}))
     print(f"Coding Opus remote listening on 127.0.0.1:{server.server_port}", flush=True)
     finished = threading.Event()

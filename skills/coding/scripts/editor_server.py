@@ -14,6 +14,7 @@ import json
 import sys
 import threading
 import time
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import socketserver
 from pathlib import Path
@@ -26,6 +27,7 @@ from playbook_generation import PlaybookGenerator
 from account_management import AccountManager
 from workspace_api import WorkspaceApi
 from knowledge_library import KnowledgeLibrary
+from remote_control import RemoteError, manage_projects, remote_status, restart_if_running, server_call, service_action
 
 PAGE = Path(__file__).resolve().parent.parent / "assets" / "editor.html"
 MAX_BODY = 1 << 20
@@ -54,11 +56,53 @@ class EditorState:
         self.last_ping = 0.0
         self.started = time.monotonic()
         self.lock = threading.Lock()
+        self.remote_lock = threading.Lock()
         self.usage_refresh = UsageRefresh(policy_path)
         self.generator = PlaybookGenerator(policy_path, usage=self.usage_refresh)
         self.account_manager = AccountManager(policy_path)
         self.workspace = WorkspaceApi(policy_path)
         self.library = KnowledgeLibrary(policy_path)
+
+    def remote_home(self) -> Path:
+        return self.policy_path.resolve().parent / "remote-control"
+
+    def open_remote_panel(self) -> Dict[str, str]:
+        """Start the panel and open it on this computer, already paired through a single-use code."""
+        home = self.remote_home()
+        with self.remote_lock:
+            if not (home / "config.json").is_file():
+                return {"status": "setup-required"}
+            try:
+                port = service_action(home, "start")["port"]
+                code = server_call(home, "POST", "/pair/new", {"kind": "pc"})["code"]
+                opened = (isinstance(port, int) and 1024 <= port <= 65535 and isinstance(code, str)
+                          and code.isalnum() and webbrowser.open(f"http://127.0.0.1:{port}/#pair={code}"))
+            except (OSError, ValueError, KeyError, TypeError, RemoteError, webbrowser.Error):
+                opened = False
+        return {"status": "opened" if opened else "unavailable"}
+
+    def remote(self) -> Dict[str, Any]:
+        try:
+            return {"ok": True, "remote": remote_status(self.remote_home())}
+        except (OSError, ValueError, KeyError, RemoteError) as error:
+            return {"ok": False, "error": str(error)}
+
+    def remote_action(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Projects, writing and the service, from this computer only (the editor never leaves 127.0.0.1)."""
+        home = self.remote_home()
+        action = body.get("action")
+        with self.remote_lock:
+            try:
+                if action in ("start", "stop"):
+                    if (home / "config.json").is_file():
+                        service_action(home, action)
+                    return {"ok": True, "remote": remote_status(home)}
+                status = manage_projects(home, action, path=body.get("path"), key=body.get("key"),
+                                         allow_write=body.get("allowWrite"))
+                restart_if_running(home)  # the panel reads its projects when it starts
+                return {"ok": True, "remote": {**status, "running": remote_status(home)["running"]}}
+            except (OSError, ValueError, KeyError, RemoteError) as error:
+                return {"ok": False, "error": str(error)}
 
     def playbooks(self) -> Dict[str, Any]:
         user = orchestrate.user_playbooks_path(self.policy_path)
@@ -182,6 +226,8 @@ def make_handler(state: EditorState, port: int):
                     self._json(200, state.models())
                 elif path == "/api/clis":
                     self._json(200, state.clis())
+                elif path == "/api/remote":
+                    self._json(200, state.remote())
                 elif path == "/api/accounts":
                     self._json(200, state.accounts())
                 elif path == "/api/usage":
@@ -201,7 +247,8 @@ def make_handler(state: EditorState, port: int):
                 return
             path = self.path.split("?", 1)[0]
             if path not in ("/api/playbooks", "/api/accounts/order", "/api/playbooks/generate",
-                            "/api/accounts/manage", "/api/workspace", "/api/library"):
+                            "/api/accounts/manage", "/api/workspace", "/api/library", "/api/remote/open",
+                            "/api/remote"):
                 self._json(404, {"error": "not found"})
                 return
             try:
@@ -217,6 +264,18 @@ def make_handler(state: EditorState, port: int):
             except ValueError:
                 body = None
             body = body if isinstance(body, dict) else {}
+            if path == "/api/remote":
+                if self.headers.get_content_type() != "application/json":
+                    self._json(415, {"ok": False, "error": "application/json required"})
+                    return
+                self._json(200, state.remote_action(body))
+                return
+            if path == "/api/remote/open":
+                if self.headers.get_content_type() != "application/json":
+                    self._json(415, {"ok": False, "error": "application/json required"})
+                    return
+                self._json(200, state.open_remote_panel())
+                return
             if path in ("/api/workspace", "/api/library"):
                 if self.headers.get_content_type() != "application/json":
                     self._json(415, {"ok": False, "error": "application/json required"})
@@ -270,7 +329,6 @@ def launch(policy_path: Path, open_browser: bool) -> Dict[str, Any]:
     import secrets
     import socket
     import subprocess
-    import webbrowser
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))

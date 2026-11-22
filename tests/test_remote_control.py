@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "skills/coding/scripts" if (ROOT / "skills/coding/scripts").is_dir() else ROOT / "coding/scripts"
 sys.path.insert(0, str(SCRIPTS))
 from chat_memory import ChatMemory
-from remote_control import LocalHTTPServer, handler, rpc
+from remote_control import (Devices, LocalHTTPServer, Pairing, handler, manage_projects, private_panel_url,
+                            remote_status, rpc)
 from remote_jobs import RemoteError, RemoteJobs
 
 
@@ -166,6 +167,128 @@ class RemoteTest(unittest.TestCase):
             self.assertEqual(json.load(response)["result"]["structuredContent"]["result"][0]["id"], "project")
         bad = rpc(self.jobs, {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "start_agent", "arguments": {"project": "outside"}}})
         self.assertTrue(bad["result"]["isError"])
+
+    def test_connection_guide_shares_the_address_without_the_key(self):
+        origin = "https://test-machine.private-net.ts.net"
+        self.config["origins"].append(origin)
+        self.assertEqual(private_panel_url(self.config), origin + "/coding-opus/")
+        self.config["panel_url"] = origin + "/remote/"
+        self.assertEqual(private_panel_url(self.config), origin + "/remote/")
+        for suffix in ("?token=secret", "#token=secret"):
+            self.assertEqual(private_panel_url({**self.config, "panel_url": origin + suffix}), "")
+        server = LocalHTTPServer(("127.0.0.1", 0), handler(self.jobs, self.config))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        base = f"http://127.0.0.1:{server.server_port}"
+        with urllib.request.urlopen(base + "/", timeout=5) as response:
+            html = response.read().decode()
+        self.assertIn(f'content="{origin}/remote/"', html)
+        self.assertNotIn(self.config["token"], html)
+        public = urllib.request.Request(base + "/", headers={"Host": "test-machine.private-net.ts.net"})
+        with urllib.request.urlopen(public, timeout=5) as response:
+            self.assertNotIn(origin.encode(), response.read())
+        with urllib.request.urlopen(base + "/remote-qr.js", timeout=5) as response:
+            self.assertIn(b"encodeRemoteQr", response.read())
+
+
+class PairingTest(unittest.TestCase):
+    """Pairing replaces the shared key: single-use codes, one token per device, revocable."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.home = Path(temp.name)
+        self.now = [1000.0]
+        self.config = {"state_dir": str(self.home), "projects": {}, "token": "master-" + "m" * 40,
+                       "origins": [], "allow_write": False}
+        self.devices = Devices(self.home)
+        self.pairing = Pairing(clock=lambda: self.now[0])
+        server = LocalHTTPServer(("127.0.0.1", 0), handler(None, self.config, self.devices, self.pairing))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.base = f"http://127.0.0.1:{server.server_port}"
+
+    def call(self, method, path, body=None, token=None):
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        data = json.dumps(body).encode() if body is not None else None
+        request = urllib.request.Request(self.base + path, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, json.load(response)
+        except urllib.error.HTTPError as error:
+            raw = error.read()
+            return error.code, json.loads(raw) if raw.strip() else {}
+
+    def pair(self, kind, token, name):
+        status, made = self.call("POST", "/pair/new", {"kind": kind}, token)
+        self.assertEqual(status, 200, made)
+        status, paired = self.call("POST", "/pair", {"code": made["code"].lower(), "name": name})
+        self.assertEqual(status, 200, paired)
+        return made["code"], paired
+
+    def test_the_owner_pairs_a_computer_that_pairs_phones(self):
+        master = self.config["token"]
+        code, pc = self.pair("pc", master, "Este computador")
+        self.assertEqual(pc["device"]["kind"], "pc")
+        self.assertNotIn(pc["token"], (self.home / "devices.json").read_text(encoding="utf-8"))
+        self.assertEqual(self.call("POST", "/pair", {"code": code})[0], 400)  # single use
+        _, phone = self.pair("phone", pc["token"], "Celular")
+        self.assertEqual(phone["device"]["paired_by"], pc["device"]["id"])
+        # A phone uses the panel but cannot pair devices, list them or stop the server.
+        self.assertEqual(self.call("POST", "/pair/new", {"kind": "phone"}, phone["token"])[0], 403)
+        self.assertEqual(self.call("GET", "/devices", token=phone["token"])[0], 403)
+        self.assertEqual(self.call("POST", "/_stop", {}, phone["token"])[0], 403)
+        self.assertEqual(self.call("GET", "/health", token=phone["token"])[0], 200)
+        # A paired computer pairs phones only.
+        self.assertEqual(self.call("POST", "/pair/new", {"kind": "pc"}, pc["token"])[0], 403)
+        status, listed = self.call("GET", "/devices", token=pc["token"])
+        self.assertEqual((status, [d["name"] for d in listed["devices"]], listed["you"]),
+                         (200, ["Este computador", "Celular"], pc["device"]["id"]))
+        # Revoking the computer revokes the phone it paired.
+        status, done = self.call("POST", "/devices/revoke", {"id": pc["device"]["id"]}, master)
+        self.assertEqual((status, done["revoked"]), (200, 2))
+        self.assertEqual(self.call("GET", "/health", token=phone["token"])[0], 401)
+
+    def test_codes_expire_and_wrong_guesses_lock_pairing(self):
+        _, made = self.call("POST", "/pair/new", {"kind": "phone"}, self.config["token"])
+        self.now[0] += 301
+        self.assertEqual(self.call("POST", "/pair", {"code": made["code"]})[0], 400)
+        for _ in range(19):
+            self.assertEqual(self.call("POST", "/pair", {"code": "WRONG123"})[0], 400)
+        self.assertEqual(self.call("POST", "/pair", {"code": "WRONG123"})[0], 429)
+        _, fresh = self.call("POST", "/pair/new", {"kind": "phone"}, self.config["token"])
+        self.assertEqual(self.call("POST", "/pair", {"code": fresh["code"]})[0], 429)  # still locked
+        self.now[0] += 601
+        self.assertEqual(self.call("POST", "/pair", {"code": fresh["code"]})[0], 400)  # expired meanwhile
+        _, after = self.call("POST", "/pair/new", {"kind": "phone"}, self.config["token"])
+        self.assertEqual(self.call("POST", "/pair", {"code": after["code"]})[0], 200)
+
+    def test_pairing_this_computer_again_replaces_its_entry(self):
+        self.pair("pc", self.config["token"], "Este computador")
+        _, second = self.pair("pc", self.config["token"], "Este computador")
+        self.assertEqual([d["id"] for d in self.devices.listed()], [second["device"]["id"]])
+
+
+class ProjectManagementTest(unittest.TestCase):
+    def test_add_remove_and_write_from_the_editor(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home, project = Path(temp) / "remote", Path(temp) / "My App"
+            project.mkdir()
+            status = manage_projects(home, "add", path=str(project))
+            self.assertEqual([(p["key"], p["exists"]) for p in status["projects"]], [("my-app", True)])
+            self.assertFalse(status["allow_write"])
+            with self.assertRaises(RemoteError):
+                manage_projects(home, "add", path=str(project))
+            with self.assertRaises(RemoteError):
+                manage_projects(home, "add", path="relative/folder")
+            self.assertTrue(manage_projects(home, "write", allow_write=True)["allow_write"])
+            project.rmdir()
+            self.assertFalse(remote_status(home)["projects"][0]["exists"])
+            self.assertEqual(manage_projects(home, "remove", key="my-app")["projects"], [])
 
 
 if __name__ == "__main__":

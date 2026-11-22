@@ -22,7 +22,14 @@ vi.mock('./i18n', () => ({ useT: () => (key: string) => key }))
 vi.mock('@/lib/agent-catalog', () => ({ AgentIcon: () => null }))
 
 const text = `version: 1
-providers: [claude, codex]
+providers: [claude, codex, opencode]
+adapters:
+  opencode:
+    command: opencode
+    args: [run, --format, json]
+    checked:
+      command: opencode run --help
+      date: "2026-11-09"
 profile: base
 profiles:
   base: { name: Base }
@@ -71,6 +78,13 @@ const savedProfile = () =>
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
+})
+
+it('opens a provider with structured adapter verification details', () => {
+  mount()
+  click('OpenCode 3')
+  expect(screen.getByText('opencode run --format json')).toBeDefined()
+  expect(screen.getByText('opencode run --help · 2026-11-09')).toBeDefined()
 })
 
 it('persists undo during an in-flight save, then redoes the edit', async () => {

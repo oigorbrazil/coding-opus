@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
+  <meta name="remote-panel-url" content="__CODING_OPUS_REMOTE_PANEL_URL__">
   <title>Coding Opus · Controle remoto</title>
   <style>
     :root { --canvas:#fff; --surface:#f2f2f7; --ink:#1f1f1f; --muted:#64646b; --line:#e2e2e3; --action:#075dbb; --action-fill:#075dbb; --fill:#efeff0; --focus:#2766b9; --ready:#176b43; --attention:#875619; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color-scheme:light; }
@@ -31,7 +32,7 @@
     textarea { resize:vertical; min-height:140px; line-height:1.55; caret-color:var(--action); }
     input::placeholder, textarea::placeholder { color:var(--muted); }
     button { min-height:44px; border:1px solid var(--line); background:var(--fill); color:var(--ink); border-radius:10px; padding:9px 14px; cursor:pointer; font-weight:550; }
-    button:hover { filter:brightness(.96); }
+    button:hover:not(:disabled) { filter:brightness(.96); }
     button:disabled { cursor:default; opacity:.5; }
     .primary { background:var(--action-fill); color:white; border-color:var(--action-fill); }
     .quiet { background:transparent; border-color:transparent; }
@@ -42,9 +43,32 @@
     .row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
     .row > .field { flex:1; min-width:130px; }
     .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
-    #connection { max-width:480px; margin-bottom:36px; }
-    #connection .row { align-items:stretch; flex-wrap:nowrap; }
+    .connection { display:grid; grid-template-columns:minmax(0,1fr); gap:24px; max-width:520px; }
+    .connection[data-local] { grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr); max-width:none; }
+    .connectPanel, .phoneGuide { padding:24px; border:1px solid var(--line); border-radius:14px; }
+    .connectPanel { align-self:start; }
+    .connectPanel h2, .phoneGuide h2 { margin:0 0 6px; }
+    .connectPanel form { margin-top:20px; }
+    .connectPanel .primary { width:100%; margin-top:12px; }
+    .keyRow { display:flex; gap:8px; }
     #token { min-width:0; }
+    #keyHelp { display:block; margin-top:10px; }
+    #loginNotice { color:var(--attention); margin-top:12px; overflow-wrap:anywhere; }
+    .phoneGuide { background:var(--surface); }
+    .phoneGuide ol { padding-inline-start:22px; margin:16px 0 0; }
+    .phoneGuide li { padding-inline-start:4px; margin-top:12px; }
+    .phoneGuide li::marker { font-weight:650; color:var(--muted); }
+    .phoneGuide li p { margin-top:3px; }
+    .phoneLink { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:10px; }
+    .phoneLink svg { flex:none; width:136px; height:136px; border-radius:8px; background:white; }
+    .phoneAddress { flex:1 1 120px; min-width:0; }
+    .phoneAddress a { display:block; overflow-wrap:anywhere; }
+    .phoneAddress button { margin-top:8px; }
+    a { color:var(--action); text-underline-offset:3px; }
+    #connectHelp code, .phoneGuide code { overflow-wrap:anywhere; font-size:.93em; }
+    #connectHelp p + p { margin-top:8px; }
+    .taskIntro { margin:-4px 0 16px; }
+    .emptyTask { border:1px solid var(--line); padding:16px; border-radius:12px; }
     #notice { margin:0 0 16px; padding:12px 14px; border:1px solid var(--line); background:var(--surface); border-radius:10px; overflow-wrap:anywhere; }
     .watch { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin-bottom:10px; }
     .watch small { flex:1 1 140px; line-height:1.4; }
@@ -69,9 +93,25 @@
     .check-option input { width:18px; height:18px; min-height:0; flex:none; accent-color:var(--action); }
     #gate { display:grid; gap:10px; margin-top:16px; padding:14px; border:1px solid var(--line); border-radius:12px; }
     #gateQuestion { overflow-wrap:anywhere; }
+    #pairNotice { margin-top:12px; overflow-wrap:anywhere; }
+    #pairNotice[data-state="error"] { color:var(--attention); }
+    #keyLogin form { margin-top:4px; }
+    .devicesPanel { margin:18px 0 4px; padding:16px; border:1px solid var(--line); border-radius:14px; background:var(--surface); }
+    .devicesPanel h2 { margin:0 0 6px; font-size:16px; }
+    .devicesPanel h3 { margin:18px 0 6px; font-size:13px; color:var(--muted); font-weight:600; }
+    .phoneSteps { padding-inline-start:20px; margin:0 0 12px; }
+    .phoneSteps li { margin-top:4px; }
+    #phoneQrHelp { margin-top:8px; }
+    .pairCode { font:600 18px/1.3 ui-monospace,Consolas,monospace; letter-spacing:.08em; }
+    .devices { list-style:none; padding:0; margin:0; }
+    .devices li { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0; border-top:1px solid var(--line); }
+    .devices li small { display:block; }
+    .devices button { min-height:36px; padding:6px 12px; }
     [hidden] { display:none !important; }
     @media(max-width:680px) {
       main { padding:18px 16px max(24px,env(safe-area-inset-bottom)); }
+      .connection[data-local] { grid-template-columns:minmax(0,1fr); }
+      .connectPanel, .phoneGuide { padding:16px; }
       .workspace { display:block; }
       #taskPane { border:0; padding:0; }
       #app[data-view="list"] #taskPane, #app:not([data-view="list"]) #taskList { display:none; }
@@ -90,12 +130,26 @@
     </div>
   </header>
   <div id="notice" role="status" aria-live="polite" hidden></div>
-  <form id="connection">
-    <h2>Conectar ao computador</h2>
-    <label for="token">Chave de acesso</label>
-    <div class="row"><input id="token" type="password" autocomplete="off" required placeholder="Cole a chave configurada no computador"><button id="connect" class="primary">Conectar</button></div>
-    <p class="muted" style="margin-top:10px">A chave fica nesta aba até você desconectar.</p>
-  </form>
+  <div id="connection" class="connection">
+    <section class="connectPanel" aria-labelledby="connectTitle">
+      <h2 id="connectTitle">Conectar ao computador</h2>
+      <p class="muted" id="connectIntro">No computador, abra <strong>Controle remoto</strong> no Coding Opus: o painel abre já conectado. No celular, leia o QR que esse painel gera.</p>
+      <p id="pairNotice" role="status" hidden></p>
+      <details id="keyLogin">
+        <summary>Usar a chave de acesso</summary>
+        <form id="loginForm">
+          <label for="token">Chave de acesso</label>
+          <div class="keyRow">
+            <input id="token" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="keyHelp" required placeholder="Cole a chave de acesso">
+            <button id="showKey" type="button" aria-controls="token">Mostrar</button>
+          </div>
+          <small id="keyHelp">A chave mestra fica no <code>config.json</code> do controle remoto (<code>token</code>). Prefira o QR: cada aparelho ganha sua própria chave, que você pode revogar.</small>
+          <button id="connect" class="primary" type="submit">Conectar</button>
+          <p id="loginNotice" role="status" hidden></p>
+        </form>
+      </details>
+    </section>
+  </div>
   <div id="app" data-view="list" hidden>
     <div class="workspace">
       <section id="taskList" aria-labelledby="taskListTitle">
@@ -105,6 +159,24 @@
         </div>
         <p id="activityMessage" class="screenReader" role="status" aria-atomic="true"></p>
         <div id="sessions"><p class="muted">Carregando tarefas…</p></div>
+        <section id="devicesPanel" class="devicesPanel" aria-labelledby="devicesTitle" hidden>
+          <h2 id="devicesTitle">Celular e aparelhos</h2>
+          <ol class="phoneSteps">
+            <li>Ligue o Tailscale no celular, com a mesma conta deste computador.</li>
+            <li>Gere o QR e leia com a câmera do celular. Ele vale por 5 minutos e só uma vez.</li>
+          </ol>
+          <button id="makePhoneQr" type="button" class="primary">Gerar QR para o celular</button>
+          <p id="phoneQrHelp" class="muted" role="status"></p>
+          <div id="phoneLink" class="phoneLink" hidden>
+            <svg id="phoneQr" role="img" aria-label="QR code para conectar o celular" shape-rendering="crispEdges"></svg>
+            <div class="phoneAddress">
+              <p id="phoneCode" class="pairCode"></p>
+              <small id="phoneExpires"></small>
+            </div>
+          </div>
+          <h3>Aparelhos conectados</h3>
+          <ul id="devices" class="devices"><li class="muted">Carregando…</li></ul>
+        </section>
         <details>
           <summary>Notificações</summary>
           <div class="watch">
@@ -114,10 +186,11 @@
         </details>
       </section>
       <div id="taskPane">
-        <p id="selectionHint" class="muted">Selecione uma tarefa para ver o andamento e a resposta.</p>
+        <div id="selectionHint" class="emptyTask"><strong>Nenhuma tarefa selecionada</strong><p class="muted">Abra uma tarefa da lista para acompanhar o andamento ou ver a resposta.</p></div>
         <section id="composerPanel" hidden aria-labelledby="composerTitle">
           <button class="quiet back" data-back type="button">Voltar às tarefas</button>
           <h2 id="composerTitle" tabindex="-1">Nova tarefa</h2>
+          <p id="composerHelp" class="muted taskIntro">Escolha um projeto e um agente. A tarefa roda no computador conectado.</p>
           <form id="composer">
             <div class="field"><label for="project">Projeto</label><select id="project" required></select></div>
             <div class="row">
@@ -161,6 +234,127 @@
   const el = id => document.getElementById(id);
   const basePath = location.pathname.replace(/index\.html$/, '').replace(/\/?$/, '/');
   const endpoint = basePath + 'mcp';
+  const keyField = el('token');
+  el('showKey').onclick = () => {
+    const show = keyField.type === 'password';
+    keyField.type = show ? 'text' : 'password';
+    el('showKey').textContent = show ? 'Ocultar' : 'Mostrar';
+  };
+
+  const panelAddress = document.querySelector('meta[name="remote-panel-url"]').content;
+  const STORE = 'coding-opus-remote-device';
+  const stored = () => { try { return JSON.parse(localStorage.getItem(STORE) || 'null'); } catch { return null; } };
+  const remember = value => { try { value ? localStorage.setItem(STORE, JSON.stringify(value)) : localStorage.removeItem(STORE); } catch {} };
+  let deviceKind = 'phone', deviceId = null, qrReady = null, qrTimer = null;
+
+  function deviceName() {
+    if (['127.0.0.1','localhost'].includes(location.hostname)) return 'Este computador';
+    const agent = navigator.userAgent;
+    if (/iPhone/.test(agent)) return 'iPhone';
+    if (/iPad/.test(agent)) return 'iPad';
+    if (/Android/.test(agent)) return 'Android';
+    return 'Navegador';
+  }
+  function pairNotice(text, error=false) {
+    const box = el('pairNotice');
+    box.textContent = text; box.hidden = !text; box.dataset.state = error ? 'error' : '';
+  }
+  async function redeem(code) {
+    const response = await fetch(basePath + 'pair', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({code, name:deviceName()})}).catch(() => null);
+    const body = response ? await response.json().catch(() => ({})) : {};
+    if (!response || !response.ok) throw Error(body.error || 'Não foi possível parear. Gere um novo QR no computador.');
+    return body;
+  }
+  function loadQr() {
+    qrReady ||= new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = basePath + 'remote-qr.js';
+      script.onload = () => resolve(window.encodeRemoteQr || encodeRemoteQr);
+      script.onerror = reject;
+      document.head.append(script);
+    });
+    return qrReady;
+  }
+  function drawQr(svg, matrix) {
+    const width = matrix.length + 8;
+    const dark = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    dark.setAttribute('d', matrix.flatMap((row, y) => row.map((on, x) => on ? `M${x + 4} ${y + 4}h1v1h-1z` : '')).join(''));
+    dark.setAttribute('fill', '#000');
+    svg.setAttribute('viewBox', `0 0 ${width} ${width}`);
+    svg.replaceChildren(dark);
+  }
+  async function authed(path, body) {
+    const response = await fetch(basePath + path, {method: body ? 'POST' : 'GET',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+      body: body ? JSON.stringify(body) : undefined}).catch(() => null);
+    if (!response) throw new ConnectionError('O painel perdeu a conexão com o computador.');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw Error(data.error || (response.status === 403 ? 'Este aparelho não pode fazer isso.' : 'Não foi possível completar o pedido.'));
+    return data;
+  }
+  async function refreshDevices() {
+    const list = el('devices');
+    try {
+      const data = await authed('devices');
+      list.replaceChildren(...data.devices.map(device => {
+        const item = document.createElement('li');
+        const text = document.createElement('div');
+        const name = document.createElement('strong');
+        name.textContent = device.name + (device.id === data.you ? ' (este aparelho)' : '');
+        const meta = document.createElement('small');
+        meta.className = 'muted';
+        meta.textContent = (device.kind === 'pc' ? 'Computador' : 'Celular') + ' · desde ' +
+          new Date(device.created).toLocaleDateString('pt-BR');
+        text.append(name, meta);
+        const revoke = document.createElement('button');
+        revoke.type = 'button';
+        revoke.textContent = 'Revogar';
+        revoke.onclick = async () => {
+          if (!confirm(`Revogar ${device.name}? Ele precisará de um novo QR para voltar.` +
+              (device.kind === 'pc' ? ' Os celulares pareados por ele também saem.' : ''))) return;
+          await authed('devices/revoke', {id: device.id}).catch(error => notice(error.message));
+          if (device.id === data.you) { remember(null); location.reload(); return; }
+          void refreshDevices();
+        };
+        item.append(text, revoke);
+        return item;
+      }));
+      if (!data.devices.length) {
+        const empty = document.createElement('li'); empty.className = 'muted'; empty.textContent = 'Nenhum aparelho pareado.';
+        list.replaceChildren(empty);
+      }
+    } catch (error) {
+      const item = document.createElement('li'); item.className = 'muted'; item.textContent = error.message;
+      list.replaceChildren(item);
+    }
+  }
+  el('makePhoneQr').onclick = async () => {
+    const help = el('phoneQrHelp');
+    if (!panelAddress.startsWith('https://')) {
+      help.textContent = 'Falta o endereço do Tailscale. Configure-o no Coding Opus, em Controle remoto.';
+      return;
+    }
+    el('makePhoneQr').disabled = true;
+    try {
+      const made = await authed('pair/new', {kind:'phone'});
+      const link = panelAddress + '#pair=' + made.code;
+      drawQr(el('phoneQr'), (await loadQr())(link));
+      el('phoneCode').textContent = made.code.slice(0, 4) + '-' + made.code.slice(4);
+      el('phoneLink').hidden = false;
+      help.textContent = 'Leia com a câmera do celular. O código fica válido só para esta leitura.';
+      const until = Date.now() + made.expires_in * 1000;
+      clearInterval(qrTimer);
+      const tick = () => {
+        const left = Math.max(0, Math.round((until - Date.now()) / 1000));
+        el('phoneExpires').textContent = left ? `Vale por mais ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : 'Expirou. Gere outro.';
+        if (!left) { clearInterval(qrTimer); el('phoneLink').hidden = true; void refreshDevices(); }
+      };
+      tick(); qrTimer = setInterval(tick, 1000);
+    } catch (error) {
+      help.textContent = error.message;
+    } finally { el('makePhoneQr').disabled = false; }
+  };
   const stateNames = {starting:'Preparando',running:'Em execução',stopping:'Interrompendo',needs_input:'Aguardando sua checagem',succeeded:'Resposta disponível',failed:'Falhou',interrupted:'Interrompida',stopped:'Interrompida',timed_out:'Tempo esgotado',skipped:'Não iniciada'};
   const activeStates = new Set(['starting','running','stopping','needs_input']);
   const attentionStates = new Set(['needs_input','failed','timed_out','skipped']);
@@ -287,7 +481,7 @@
       body:JSON.stringify({jsonrpc:'2.0',id:crypto.randomUUID(),method,params}),
       signal:AbortSignal.timeout?.(8000)
     }).catch(() => { throw new ConnectionError(unavailable); });
-    if (response.status === 401) throw Error('Chave inválida. Confira a chave de acesso no computador.');
+    if (response.status === 401) throw Error('Chave inválida ou revogada. Gere um novo QR no computador.');
     if (response.status >= 500) throw new ConnectionError(unavailable);
     if (!response.ok) throw Error('Não foi possível completar o pedido. Confira a conexão e tente novamente.');
     const data = await response.json().catch(() => { throw new ConnectionError(unavailable); });
@@ -310,8 +504,8 @@
     el('sessions').replaceChildren();
     if (!sessions.length) {
       const p = document.createElement('p');
-      p.className='muted';
-      p.textContent='Use Nova tarefa para enviar seu primeiro pedido.';
+      p.className='muted emptyTask';
+      p.textContent='Nenhuma tarefa por aqui. Em Nova tarefa, escolha o projeto e o agente que vai trabalhar.';
       el('sessions').append(p);
       return;
     }
@@ -369,6 +563,7 @@
   }
   function configureComposer() {
     el('composerTitle').textContent=transfer?'Continuar na outra IA':selected?'Continuar conversa':'Nova tarefa';
+    el('composerHelp').hidden=!!selected;
     el('project').disabled=el('agent').disabled=el('mode').disabled=!!selected||sending;
     el('prompt').disabled=el('isolate').disabled=sending;
     el('isolation').hidden=!!selected || el('mode').value!=='write';
@@ -432,23 +627,70 @@
     el('technical').hidden=!task.output_tail;
     configureComposer();
   }
-  el('connection').onsubmit=async event=>{
+  async function connectWith(newToken, kind, id) {
+    token = newToken; deviceKind = kind; deviceId = id;
+    await message('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'coding-opus-mobile',version:'37.0.0'}});
+    const projects=await tool('projects'); el('project').replaceChildren();
+    projects.forEach(project=>{const option=document.createElement('option'); option.value=project.id; option.textContent=project.name; el('project').append(option); projectNames.set(project.id,project.name);});
+    await refreshSessions();
+    el('app').hidden=false; el('connection').hidden=true; el('headerActions').hidden=false; keyField.value='';
+    el('devicesPanel').hidden = kind === 'phone';
+    if (kind !== 'phone') void refreshDevices();
+    notice('');
+    showView('list');
+  }
+  el('loginForm').onsubmit=async event=>{
     event.preventDefault();
     if (el('connect').disabled) return;
-    el('connect').disabled=true;
-    token=el('token').value.trim();
-    notice('Conectando…');
+    const connect = el('connect');
+    const loginNotice = el('loginNotice');
+    const key = keyField.value.trim();
+    if (!key) {
+      loginNotice.hidden=false;
+      loginNotice.textContent='Cole a chave de acesso antes de conectar.';
+      keyField.focus();
+      return;
+    }
+    connect.disabled=true;
+    connect.textContent='Conectando…';
+    loginNotice.hidden=true;
     try {
-      await message('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'coding-opus-mobile',version:'36.0.0'}});
-      const projects=await tool('projects'); el('project').replaceChildren();
-      projects.forEach(project=>{const option=document.createElement('option'); option.value=project.id; option.textContent=project.name; el('project').append(option); projectNames.set(project.id,project.name);});
-      await refreshSessions();
-      el('app').hidden=false; el('connection').hidden=true; el('headerActions').hidden=false; el('token').value='';
-      notice('');
-      showView('list');
-    } catch(error) { reportError(error); }
-    finally { el('connect').disabled=false; }
+      await connectWith(key, 'master', null);
+    } catch(error) {
+      token='';
+      loginNotice.hidden=false;
+      loginNotice.textContent=error.message;
+      keyField.focus();
+    } finally {
+      connect.disabled=false;
+      connect.textContent='Conectar';
+    }
   };
+  async function boot() {
+    const code = new URLSearchParams(location.hash.slice(1)).get('pair');
+    if (code) {
+      history.replaceState(null, '', location.pathname + location.search);
+      pairNotice('Conectando este aparelho…');
+      try {
+        const paired = await redeem(code);
+        remember({token:paired.token, kind:paired.device.kind, id:paired.device.id});
+      } catch (error) {
+        pairNotice(error.message, true);
+        return;
+      }
+    }
+    const saved = stored();
+    if (!saved?.token) return;
+    try {
+      await connectWith(saved.token, saved.kind || 'phone', saved.id || null);
+      pairNotice('');
+    } catch (error) {
+      token = '';
+      if (!(error instanceof ConnectionError)) remember(null);
+      pairNotice(error instanceof ConnectionError ? error.message :
+        'Este aparelho foi desconectado. Gere um novo QR no computador.', true);
+    }
+  }
   el('composer').onsubmit=async event=>{
     event.preventDefault(); if(sending||busy)return; sending=true; configureComposer(); retryId ||=crypto.randomUUID();
     const previous=selected;
@@ -516,7 +758,7 @@
   }
   el('continueTask').onclick=()=>composeFollowup(false);
   el('switch').onclick=()=>composeFollowup(true);
-  el('disconnect').onclick=()=>location.reload();
+  el('disconnect').onclick=()=>{remember(null);location.reload();};
   async function poll(force=false){
     if(el('app').hidden || polling || sending || deciding)return;
     polling=true;
@@ -531,6 +773,7 @@
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)void poll(true);});
   window.addEventListener('offline',()=>{showConnection('offline');configureComposer();});
   window.addEventListener('online',()=>{showConnection('reconnecting');configureComposer();void poll(true);});
+  void boot();
 </script>
 </body>
 </html>

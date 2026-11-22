@@ -14,6 +14,7 @@ import {
   activeOrder,
   daysUntil,
   finalize,
+  isMap,
   longWindow,
   modelCost,
   modelsOf,
@@ -235,11 +236,21 @@ export function ProviderPanel({ id }: { id: string }) {
   if (!def) {
     return null
   }
-  // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: YAML from the user's playbooks file; the skill validates its shape.
-  const adapters = s.data.adapters as
-    | Record<string, { command?: string; args?: string[]; checked?: string }>
-    | undefined
-  const adapter = adapters?.[id]
+  const rawAdapter = isMap(s.data.adapters) ? s.data.adapters[id] : undefined
+  const adapter = isMap(rawAdapter) ? rawAdapter : {}
+  const args = Array.isArray(adapter.args)
+    ? adapter.args.filter((arg) => typeof arg === 'string')
+    : []
+  const command =
+    typeof adapter.command === 'string' && adapter.command
+      ? [adapter.command, ...args].join(' ')
+      : def.cli
+  const checked = adapter.checked
+  const checkedText = isMap(checked)
+    ? [checked.command, checked.date].filter((part) => typeof part === 'string' && part).join(' · ')
+    : typeof checked === 'string'
+      ? checked
+      : null
   const order = activeOrder(s)
   const position = order.indexOf(id)
   const via = routedVia(s, id)
@@ -291,10 +302,7 @@ export function ProviderPanel({ id }: { id: string }) {
       />
       <Facts
         rows={[
-          [
-            t('playbooks.factCommand'),
-            adapter?.command ? [adapter.command, ...(adapter.args ?? [])].join(' ') : def.cli
-          ],
+          [t('playbooks.factCommand'), command],
           [
             t('playbooks.factReadOnly'),
             def.readOnly ? t('playbooks.readOnlyYes') : t('playbooks.readOnlyNo')
@@ -315,7 +323,7 @@ export function ProviderPanel({ id }: { id: string }) {
               ? t('playbooks.throughRoute', { route: ROUTES[via]?.label ?? via })
               : t('playbooks.trafficDirect')
           ],
-          [t('playbooks.factChecked'), adapter?.checked]
+          [t('playbooks.factChecked'), checkedText]
         ]}
       />
       <Section title={t('playbooks.orderTitle', { profile: name })}>
