@@ -805,3 +805,413 @@
   overflow-wrap: anywhere;
   font-size: 12px;
 }
+
+.automationForm {
+  display: grid;
+  gap: 18px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.automationForm h2,
+.automationEmpty h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.automationForm label,
+.automationAdvanced label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+.automationForm input:not([type='checkbox']):not([type='radio']),
+.automationForm select,
+.automationForm textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.automationForm textarea {
+  resize: vertical;
+}
+
+.automationForm ::placeholder {
+  color: var(--text-tertiary);
+}
+
+.automationForm small {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.automationStep {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.automationStep legend {
+  margin-bottom: 10px;
+  padding: 0;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.automationInline {
+  max-width: 180px;
+}
+
+.automationTemplates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.automationChoice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.automationChoice label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 4px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--fg);
+  cursor: pointer;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+
+.automationChoice label:hover:not([data-disabled='true']) {
+  background: var(--panel-hover);
+}
+
+.automationChoice label[data-checked='true'] {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  font-weight: 600;
+}
+
+.automationChoice label[data-disabled='true'] {
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+}
+
+.automationChoice input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.automationChoice label:has(input:focus-visible) {
+  outline: 2px solid var(--ring, var(--primary));
+  outline-offset: 2px;
+}
+
+.automationAdvanced {
+  display: grid;
+  gap: 14px;
+}
+
+.automationAdvanced summary {
+  width: fit-content;
+  color: var(--fg-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.automationAdvanced[open] summary {
+  margin-bottom: 4px;
+  color: var(--fg);
+}
+
+.automationAdvanced .remoteCheck {
+  display: flex;
+  color: var(--fg);
+}
+
+.automationSummary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  font-size: 13px;
+}
+
+.automationSummary p {
+  flex: 1 1 320px;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.automationSummary .remoteCheck {
+  display: flex;
+  color: var(--fg);
+}
+
+.automationMessage {
+  margin: 0 0 12px;
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.automationList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.automationRow {
+  border-bottom: 1px solid var(--border);
+}
+
+.automationHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 14px 0;
+}
+
+.automationHead > .reminderInfo {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.automationRow[data-paused='true'] .reminderInfo strong {
+  color: var(--fg-muted);
+}
+
+.automationMeta {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.automationStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg);
+}
+
+.automationStatus::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  content: '';
+}
+
+.automationStatus[data-tone='ok']::before {
+  background: var(--status-success);
+}
+
+.automationStatus[data-tone='busy']::before {
+  background: var(--status-warning);
+}
+
+.automationStatus[data-tone='bad'] {
+  color: var(--destructive);
+}
+
+.automationStatus[data-tone='bad']::before {
+  background: var(--destructive);
+}
+
+.automationSwitch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.automationSwitch input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.automationSwitch span {
+  position: absolute;
+  inset: 0;
+  border-radius: 9px;
+  background: var(--border-strong);
+  transition: background-color 150ms ease-out;
+  pointer-events: none;
+}
+
+.automationSwitch span::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  content: '';
+  transition: transform 150ms ease-out;
+}
+
+.automationSwitch input:checked + span {
+  background: var(--status-success);
+}
+
+.automationSwitch input:checked + span::after {
+  transform: translateX(14px);
+}
+
+.automationSwitch input:focus-visible + span {
+  outline: 2px solid var(--ring, var(--primary));
+  outline-offset: 2px;
+}
+
+.automationSwitch input:disabled + span {
+  opacity: 0.6;
+}
+
+.automationChevron {
+  transition: transform 150ms ease-out;
+}
+
+[aria-expanded='true'] > .automationChevron {
+  transform: rotate(180deg);
+}
+
+.automationRuns {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 16px 46px;
+  padding: 0 0 0 12px;
+  border-left: 1px solid var(--border-strong);
+  list-style: none;
+  font-size: 12px;
+}
+
+.automationRuns li {
+  display: grid;
+  gap: 3px;
+}
+
+.automationRuns li > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.automationRunsEmpty {
+  margin: 0 0 16px 46px;
+  font-size: 12px;
+}
+
+.automationRuns pre {
+  max-height: 160px;
+  margin: 2px 0 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.automationEmpty {
+  display: grid;
+  gap: 10px;
+  max-width: 620px;
+  padding: 8px 0;
+}
+
+.automationEmpty p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.automationEmpty ul {
+  display: grid;
+  gap: 8px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.automationEmpty button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+
+.automationEmpty button:hover {
+  border-color: var(--fg-muted);
+  background: var(--panel-hover);
+}
+
+.automationEmpty button:focus-visible {
+  outline: 2px solid var(--ring, var(--primary));
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .automationRuns,
+  .automationRunsEmpty {
+    margin-left: 0;
+  }
+
+  .automationInline {
+    max-width: none;
+  }
+}
+
+.remoteWarning p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.remindersPane > .remoteWarning {
+  margin-bottom: 18px;
+}

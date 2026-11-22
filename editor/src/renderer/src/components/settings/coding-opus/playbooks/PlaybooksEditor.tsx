@@ -4,6 +4,7 @@ import {
   FileCode,
   GitBranch,
   ListTree,
+  PanelLeft,
   PanelRight,
   Plus,
   Redo2,
@@ -553,13 +554,14 @@ export function PlaybooksEditor({
               aria-controls={navId}
               onClick={() => setNavOverride(!navOpen)}
             >
+              <PanelLeft size={16} aria-hidden="true" />
+            </button>
+            <span className={styles.brand}>
               <span
                 className={styles.brandMark}
                 aria-hidden="true"
                 style={{ maskImage: `url("${codingOpusLogo}")` }}
               />
-            </button>
-            <span className={styles.brand}>
               <span className={styles.brandName}>Coding Opus</span>
             </span>
             <span className={styles.divider} aria-hidden="true" />

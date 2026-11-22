@@ -6020,6 +6020,13 @@ def detach_run(
     return {"status": "started", "runDir": str(target), "pid": process.pid}
 
 
+def settle_runner(pid: int, seconds: float = 5) -> None:
+    """Give a failed handoff's runner a moment to exit, so nothing is left running when the command returns."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline and pid_alive(pid):
+        time.sleep(0.05)
+
+
 def start_handoff(args: argparse.Namespace, policy_path: Path) -> Dict[str, Any]:
     if os.environ.get(WORKER_ENV_FLAG):
         raise PlanError("this process is an orchestration worker, and workers cannot start handoffs")
@@ -6063,6 +6070,7 @@ def start_handoff(args: argparse.Namespace, policy_path: Path) -> Dict[str, Any]
         worker_state = state.get("workers", {}).get("handoff", {})
         if worker_state.get("status") in ("failed", "skipped", "timed_out", "stopped"):
             outcome = read_optional_json(run_dir / "workers" / "handoff" / "outcome.json") or {}
+            settle_runner(launched["pid"])
             raise PlanError(f"handoff failed in {run_dir}: {outcome.get('error') or worker_state['status']}")
         if worker_state.get("worktree"):
             return {**launched, "kind": "handoff", "folder": str(folder), "provider": resolved["provider"],
@@ -6071,6 +6079,7 @@ def start_handoff(args: argparse.Namespace, policy_path: Path) -> Dict[str, Any]
                     "diff": str(run_dir / "workers" / "handoff" / "diff.patch")}
         if state.get("status") not in (None, "running"):
             outcome = read_optional_json(run_dir / "workers" / "handoff" / "outcome.json") or {}
+            settle_runner(launched["pid"])
             raise PlanError(f"handoff failed to start in {run_dir}: {outcome.get('error') or state['status']}")
         time.sleep(0.1)
     stop_payload(run_dir)

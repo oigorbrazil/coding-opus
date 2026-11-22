@@ -22,6 +22,7 @@ import time
 import urllib.request
 from urllib.parse import urlparse, urlsplit
 
+from automations import Automations, run_scheduler
 from brain import brain_path
 from chat_memory import atomic_text
 from remote_jobs import RemoteError, RemoteJobs, remote_home, runner
@@ -42,7 +43,8 @@ def token_hash(token):
 def code_version():
     here = Path(__file__).resolve().parent
     digest = hashlib.sha256()
-    for path in (here / "remote_control.py", here / "remote_jobs.py", here.parent / "assets" / "remote.html",
+    for path in (here / "remote_control.py", here / "remote_jobs.py", here / "automations.py",
+                 here.parent / "assets" / "remote.html",
                  here.parent / "assets" / "remote-qr.js"):
         try:
             digest.update(path.read_bytes())
@@ -739,6 +741,8 @@ def main():
             except Exception as error:
                 print(f"Remote monitor failed ({type(error).__name__})", file=sys.stderr)
     threading.Thread(target=monitor, daemon=True).start()
+    # The service hosts scheduled automations: they run while it is on, like Orca's while Orca is open.
+    threading.Thread(target=run_scheduler, args=(Automations(args.home), jobs, finished), daemon=True).start()
     try:
         server.serve_forever(poll_interval=0.3)
     except KeyboardInterrupt:

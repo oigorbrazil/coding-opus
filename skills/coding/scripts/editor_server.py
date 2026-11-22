@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 import threading
 import time
@@ -27,6 +28,7 @@ from playbook_generation import PlaybookGenerator
 from account_management import AccountManager
 from workspace_api import WorkspaceApi
 from knowledge_library import KnowledgeLibrary
+from automations import AutomationError, Automations
 from remote_control import (RemoteError, manage_projects, read_config, remote_status, restart_if_running,
     revoke_device, server_call, service_action, set_panel_address, tailscale_info)
 
@@ -117,6 +119,41 @@ class EditorState:
                 return {"ok": True, "remote": {**status, "running": remote_status(home)["running"]}}
             except (OSError, ValueError, KeyError, RemoteError) as error:
                 return {"ok": False, "error": str(error)}
+
+    def automations(self) -> Dict[str, Any]:
+        home = self.remote_home()
+        try:
+            status = remote_status(home)
+            items = Automations(home).listed() if status["configured"] else []
+            return {"ok": True, "automations": items, "running": status["running"], "allowWrite": status["allow_write"],
+                    "projects": [project["key"] for project in status["projects"] if project["exists"]]}
+        except (OSError, ValueError, KeyError, RemoteError, AutomationError, sqlite3.Error) as error:
+            return {"ok": False, "error": str(error)}
+
+    def automation_action(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Create, edit, remove, switch, run now or read history. Only from this computer."""
+        home = self.remote_home()
+        action, automation_id = body.get("action"), body.get("id")
+        data = body.get("data") if isinstance(body.get("data"), dict) else {}
+        try:
+            store = Automations(home)
+            if action == "create":
+                store.create(data)
+            elif action == "edit":
+                store.edit(str(automation_id), data)
+            elif action == "remove":
+                store.remove(str(automation_id))
+            elif action == "run":
+                if not service_action(home, "status")["running"]:
+                    raise AutomationError("Ligue o serviço na aba Controle remoto: é ele que executa as automações.")
+                store.request_run(str(automation_id))
+            elif action == "runs":
+                return {"ok": True, "runs": store.runs(str(automation_id), 30)}
+            else:
+                raise AutomationError("Ação desconhecida.")
+        except (OSError, ValueError, KeyError, TypeError, RemoteError, AutomationError, sqlite3.Error) as error:
+            return {"ok": False, "error": str(error)}
+        return self.automations()
 
     def playbooks(self) -> Dict[str, Any]:
         user = orchestrate.user_playbooks_path(self.policy_path)
@@ -242,6 +279,8 @@ def make_handler(state: EditorState, port: int):
                     self._json(200, state.clis())
                 elif path == "/api/remote":
                     self._json(200, state.remote())
+                elif path == "/api/automations":
+                    self._json(200, state.automations())
                 elif path == "/api/accounts":
                     self._json(200, state.accounts())
                 elif path == "/api/usage":
@@ -262,7 +301,7 @@ def make_handler(state: EditorState, port: int):
             path = self.path.split("?", 1)[0]
             if path not in ("/api/playbooks", "/api/accounts/order", "/api/playbooks/generate",
                             "/api/accounts/manage", "/api/workspace", "/api/library", "/api/remote/open",
-                            "/api/remote"):
+                            "/api/remote", "/api/automations"):
                 self._json(404, {"error": "not found"})
                 return
             try:
@@ -283,6 +322,12 @@ def make_handler(state: EditorState, port: int):
                     self._json(415, {"ok": False, "error": "application/json required"})
                     return
                 self._json(200, state.remote_action(body))
+                return
+            if path == "/api/automations":
+                if self.headers.get_content_type() != "application/json":
+                    self._json(415, {"ok": False, "error": "application/json required"})
+                    return
+                self._json(200, state.automation_action(body))
                 return
             if path == "/api/remote/open":
                 if self.headers.get_content_type() != "application/json":

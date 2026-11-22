@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Bell, BookOpen, Layers, MessagesSquare, Radio } from 'lucide-react'
+import { BookOpen, Layers, MessagesSquare, Radio, Zap } from 'lucide-react'
 import { PlaybooksPage } from '../../src/renderer/src/components/settings/coding-opus/playbooks/PlaybooksPage'
 import { KnowledgePage } from './KnowledgePage'
-import { RemindersPage } from './RemindersPage'
+import { AutomationsPage } from './AutomationsPage'
 import { StartupSplash } from './StartupSplash'
 import { localize as t } from './knowledge-model'
 import { RemotePage } from './RemotePage'
@@ -13,7 +13,7 @@ const APP_VIEWS = [
   { view: 'playbooks', name: 'Playbooks', icon: Layers },
   { view: 'notes', name: 'Second Brain', icon: BookOpen },
   { view: 'memory', name: t('Memória', 'Memory'), icon: MessagesSquare },
-  { view: 'reminders', name: t('Lembretes', 'Reminders'), icon: Bell },
+  { view: 'automations', name: t('Automações', 'Automations'), icon: Zap },
   { view: 'remote', name: t('Controle remoto', 'Remote control'), icon: Radio }
 ] as const
 
@@ -143,7 +143,7 @@ export function CodingOpusEditorApp(): React.JSX.Element {
             onLoadSettled={view === 'playbooks' && showStartup ? onLoadSettled : undefined}
           />
         </div>
-        {view === 'reminders' ? <RemindersPage onLoadSettled={onLoadSettled} /> : null}
+        {view === 'automations' ? <AutomationsPage onLoadSettled={onLoadSettled} /> : null}
         {view === 'remote' ? <RemotePage onLoadSettled={onLoadSettled} /> : null}
         {view === 'notes' || view === 'memory' ? (
           <KnowledgePage

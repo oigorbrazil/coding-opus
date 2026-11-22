@@ -111,6 +111,37 @@ Os workers não delegam nem iniciam outros workers. O servidor grava pedidos e r
 função memory quando habilitada e mantém o último checkpoint para continuação entre IAs.
 Não interprete status succeeded como prova de testes ou de conclusão de todos os objetivos.
 
+## Automações
+
+Modeladas nas automações do Orca. Uma automação roda um pedido com um agente (`claude` ou
+`codex`) num projeto liberado, no horário: `hourly`, `daily`, `weekdays`, `weekly` ou cron de
+5 campos (hora local). O serviço do controle remoto é o anfitrião: confere a agenda a cada 15 s
+enquanto está ligado e inicia cada execução pelo mesmo executor das tarefas do painel, então elas
+aparecem também no celular. Dados em `automations.sqlite3`, ao lado do config.json.
+
+- **Pré-checagem:** comando de uma linha rodado na pasta do projeto antes das execuções
+  agendadas. Código 0 segue; outro código, erro ou tempo esgotado (padrão 60 s, até 600) registra
+  `skipped_precheck`. **Rodar agora** ignora a pré-checagem.
+- **Execução perdida:** se o serviço estava desligado no horário, roda uma vez ao voltar dentro
+  da tolerância (padrão 60 min, até 1440); fora dela registra `skipped_missed`.
+- **Indisponível:** projeto removido, pasta inexistente, escrita desligada ou outra tarefa em
+  andamento no projeto registram `skipped_unavailable`; erro ao iniciar registra `dispatch_failed`.
+- **Opções:** modo só leitura ou escrita, modelo, playbook, worktree nova por execução (só
+  escrita) ou continuar a sessão da execução anterior (cai para sessão nova se ela sumiu).
+- **Histórico:** `queued`, `dispatching`, depois o estado da tarefa (`running`, `needs_input`,
+  `completed`, `failed`, `stopped`) ou o motivo do pulo. Guarda as 200 últimas por automação;
+  excluir a automação apaga o histórico.
+
+```text
+python scripts/automations.py create --name "Revisão" --prompt "Revise as mudanças"   --agent codex --project meu-app --trigger weekdays --time 09:00
+python scripts/automations.py list
+python scripts/automations.py run <id>        # na fila; o serviço inicia em até 15 s
+python scripts/automations.py runs --id <id>
+```
+
+O celular não cria nem altera automações: só vê as tarefas que elas iniciam. Crie, altere ou
+rode automações apenas a pedido do usuário.
+
 ## Operação e limites
 
 start roda em segundo plano, sem abrir ou focar janelas. É preciso iniciá-lo novamente depois

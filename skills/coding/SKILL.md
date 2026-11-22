@@ -44,6 +44,10 @@ oferece painel web e MCP autenticados, com projetos autorizados. Reutiliza os ru
 e grava o andamento na função memory. Configure a conexão privada e informe a URL e os passos
 do dispositivo remoto. Não declare acesso pelo celular verificado sem observá-lo.
 
+Automações agendadas (agente + pedido + projeto liberado + horário, como no Orca) ficam em
+`scripts/automations.py` (`list|show|create|edit|remove|run|runs`) e na aba Automações do
+editor. Rodam enquanto o serviço do controle remoto está ligado. Crie ou altere só a pedido.
+
 ## Fixar o runner uma vez
 
 Escolha a cópia desta skill e o Python antes de executar comandos. Use o caminho desta skill,

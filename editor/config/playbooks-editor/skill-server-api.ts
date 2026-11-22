@@ -156,3 +156,86 @@ export function installSkillServerApi(): void {
   // Tell the server the page is still open; it shuts down a while after the last ping.
   window.setInterval(() => void call('/api/ping').catch(() => undefined), 20_000)
 }
+
+export type AutomationPreset = 'hourly' | 'daily' | 'weekdays' | 'weekly' | 'cron'
+
+export type AutomationRun = {
+  id: string
+  automation_id: string
+  trigger: 'schedule' | 'manual'
+  scheduled_for: string | null
+  created: string
+  status: string
+  task_id: string | null
+  detail: string | null
+  result?: string | null
+}
+
+export type Automation = {
+  id: string
+  name: string
+  prompt: string
+  agent: 'claude' | 'codex'
+  project: string
+  mode: 'read-only' | 'write'
+  model: string | null
+  playbook: string | null
+  isolate: boolean
+  preset: AutomationPreset
+  cron: string
+  hour?: number
+  minute?: number
+  weekday?: number
+  enabled: boolean
+  precheck: string | null
+  precheck_timeout: number
+  grace_minutes: number
+  reuse_session: boolean
+  next_run: string | null
+  last_run: string | null
+  schedule: string
+  last: AutomationRun | null
+}
+
+export type AutomationDraft = {
+  name: string
+  prompt: string
+  agent: 'claude' | 'codex'
+  project: string
+  mode: 'read-only' | 'write'
+  model: string
+  isolate: boolean
+  preset: AutomationPreset
+  hour: number
+  minute: number
+  weekday: number
+  cron: string
+  enabled: boolean
+  precheck: string
+  precheck_timeout: number
+  grace_minutes: number
+  reuse_session: boolean
+}
+
+export type AutomationsState = {
+  automations: Automation[]
+  running: boolean
+  allowWrite: boolean
+  projects: string[]
+}
+
+type AutomationsResult = ({ ok: true } & AutomationsState) | { ok: false; error: string }
+
+export const readAutomations = () => call<AutomationsResult>('/api/automations')
+
+export const automationAction = (body: {
+  action: 'create' | 'edit' | 'remove' | 'run'
+  id?: string
+  data?: Partial<AutomationDraft>
+}) => call<AutomationsResult>('/api/automations', { method: 'POST', body: JSON.stringify(body) })
+
+export const automationRuns = (id: string) =>
+  call<{ ok: true; runs: AutomationRun[] } | { ok: false; error: string }>('/api/automations', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'runs', id })
+  })

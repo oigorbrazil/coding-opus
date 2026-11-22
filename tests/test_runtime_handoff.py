@@ -17,7 +17,6 @@ spec = importlib.util.spec_from_file_location("runtime_runner", SCRIPT)
 r = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(r)
 
-
 class RuntimeTest(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="coding-runtime-")
@@ -132,6 +131,8 @@ class HandoffTest(unittest.TestCase):
         self.policy = self.root / "policy.json"
         self.env = {**os.environ, "CODING_OPUS_HOME": str(self.root / "home"),
                     "CODING_OPUS_POLICY": str(self.policy), "CODING_OPUS_SESSION": "handoff-test",
+                    # No worker terminal tabs: on a desktop they stay open and keep the worktree busy.
+                    "CODING_OPUS_TERMINALS": "0",
                     "CLAUDE_CODE_SESSION_ID": "", "CODEX_HOME": str(self.root / "codex"),
                     "CODING_OPUS_PLAYBOOKS": str(self.root / "playbooks.yaml"),
                     "CODING_OPUS_BUNDLED_PLAYBOOKS": str(ROOT / "tests/fixtures/playbooks.yaml")}
