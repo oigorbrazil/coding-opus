@@ -27,7 +27,8 @@ from playbook_generation import PlaybookGenerator
 from account_management import AccountManager
 from workspace_api import WorkspaceApi
 from knowledge_library import KnowledgeLibrary
-from remote_control import RemoteError, manage_projects, remote_status, restart_if_running, server_call, service_action
+from remote_control import (RemoteError, manage_projects, read_config, remote_status, restart_if_running,
+    revoke_device, server_call, service_action, set_panel_address, tailscale_info)
 
 PAGE = Path(__file__).resolve().parent.parent / "assets" / "editor.html"
 MAX_BODY = 1 << 20
@@ -96,6 +97,19 @@ class EditorState:
                 if action in ("start", "stop"):
                     if (home / "config.json").is_file():
                         service_action(home, action)
+                    return {"ok": True, "remote": remote_status(home)}
+                if action == "restart":
+                    restart_if_running(home)
+                    return {"ok": True, "remote": remote_status(home)}
+                if action == "detect":
+                    port = (read_config(home) or {}).get("port", 8769)
+                    return {"ok": True, "tailscale": tailscale_info(port)}
+                if action == "revoke":
+                    revoke_device(home, body.get("id"))
+                    return {"ok": True, "remote": remote_status(home)}
+                if action == "panel":
+                    set_panel_address(home, body.get("address"))
+                    restart_if_running(home)  # origins are read when the panel starts
                     return {"ok": True, "remote": remote_status(home)}
                 status = manage_projects(home, action, path=body.get("path"), key=body.get("key"),
                                          allow_write=body.get("allowWrite"))

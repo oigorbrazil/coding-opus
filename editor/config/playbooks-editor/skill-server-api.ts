@@ -56,10 +56,30 @@ export async function openRemotePanel() {
   return result.status
 }
 
+export type RemoteDevice = {
+  id: string
+  name: string
+  kind: 'pc' | 'phone'
+  created: string
+  paired_by: string | null
+}
+
+export type TailscaleInfo = {
+  installed: boolean
+  running?: boolean
+  host?: string | null
+  serve_path?: string | null
+  suggested?: string | null
+  command?: string | null
+}
+
 export type RemoteStatus = {
   configured: boolean
   running: boolean
+  current: boolean
   port?: number
+  panel_url: string
+  devices: RemoteDevice[]
   allow_write: boolean
   panel: boolean
   projects: { key: string; path: string; exists: boolean }[]
@@ -70,11 +90,19 @@ type RemoteResult = { ok: true; remote: RemoteStatus } | { ok: false; error: str
 export const readRemote = () => call<RemoteResult>('/api/remote')
 
 export const remoteAction = (body: {
-  action: 'start' | 'stop' | 'add' | 'remove' | 'write'
+  action: 'start' | 'stop' | 'restart' | 'add' | 'remove' | 'write' | 'revoke' | 'panel'
   path?: string
   key?: string
+  id?: string
+  address?: string
   allowWrite?: boolean
 }) => call<RemoteResult>('/api/remote', { method: 'POST', body: JSON.stringify(body) })
+
+export const detectTailscale = () =>
+  call<{ ok: true; tailscale: TailscaleInfo } | { ok: false; error: string }>('/api/remote', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'detect' })
+  })
 
 /** The `window.api.codingOpus` surface the editor reads, served by the skill's local server. */
 export function createCodingOpusApi() {

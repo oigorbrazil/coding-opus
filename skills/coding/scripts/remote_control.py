@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import socket
 import subprocess
 import sys
@@ -36,6 +37,21 @@ DEVICE_KINDS = ("pc", "phone")
 
 def token_hash(token):
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def code_version():
+    here = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for path in (here / "remote_control.py", here / "remote_jobs.py", here.parent / "assets" / "remote.html",
+                 here.parent / "assets" / "remote-qr.js"):
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            pass
+    return digest.hexdigest()[:16]
+
+
+CODE_VERSION = code_version()
 
 
 class Devices:
@@ -378,7 +394,7 @@ def handler(jobs, config, devices=None, pairing=None):
             elif not self.authenticated():
                 return
             elif self.path == "/health":
-                self.reply(200, b'{"ok":true,"server":"coding-opus-remote"}')
+                self.send_json(200, {"ok": True, "server": "coding-opus-remote", "code": CODE_VERSION})
             else:
                 self.reply(405 if self.path == "/mcp" else 404)
 
@@ -516,11 +532,14 @@ def manage_projects(home, action, path=None, key=None, allow_write=None):
 def remote_status(home):
     config = read_config(home)
     if config is None:
-        return {"configured": False, "running": False, "projects": [], "allow_write": False, "panel": False}
-    running = service_action(home, "status")["running"]
+        return {"configured": False, "running": False, "current": True, "projects": [], "allow_write": False,
+                "panel": False, "panel_url": "", "devices": []}
+    service = service_action(home, "status")
+    running = service["running"]
     return {
-        "configured": True, "running": running, "port": config.get("port"),
+        "configured": True, "running": running, "current": service["current"], "port": config.get("port"),
         "allow_write": bool(config.get("allow_write")), "panel": bool(private_panel_url(config)),
+        "panel_url": private_panel_url(config), "devices": device_list(home, running),
         "projects": [{"key": key, "path": value, "exists": Path(value).is_dir()}
                      for key, value in sorted(config.get("projects", {}).items())],
     }
@@ -542,6 +561,92 @@ def server_call(home, method, path, body=None):
         raise RemoteError("O painel não respondeu. Ligue o controle remoto e tente de novo.") from error
 
 
+def device_list(home, running):
+    """Paired devices. The running server keeps them in memory, so ask it first."""
+    if running:
+        try:
+            return server_call(home, "GET", "/devices")["devices"]
+        except (RemoteError, KeyError, TypeError):
+            pass  # a server from before pairing has no /devices; its file is still right
+    return Devices(home).listed()
+
+
+def revoke_device(home, device_id):
+    if not isinstance(device_id, str) or not device_id:
+        raise RemoteError("Aparelho não encontrado.")
+    if service_action(home, "status")["running"]:
+        server_call(home, "POST", "/devices/revoke", {"id": device_id})
+    elif not Devices(home).revoke(device_id):
+        raise RemoteError("Aparelho não encontrado.")
+
+
+def tailscale_exe():
+    found = shutil.which("tailscale")
+    if found:
+        return found
+    for base in (os.environ.get("ProgramFiles"), "/Applications/Tailscale.app/Contents/MacOS"):
+        candidate = Path(base or "") / ("tailscale.exe" if os.name == "nt" else "Tailscale")
+        if base and candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def tailscale_info(port, run=subprocess.run, exe=None):
+    """What Tailscale says about this computer: its name and whether Serve publishes the panel."""
+    exe = exe or tailscale_exe()
+    if not exe:
+        return {"installed": False}
+    def read(*args):
+        try:
+            done = run([exe, *args, "--json"], capture_output=True, text=True, timeout=8,
+                       creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            return json.loads(done.stdout or "{}") if done.returncode == 0 else {}
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return {}
+    status = read("status")
+    host = str((status.get("Self") or {}).get("DNSName") or "").rstrip(".").lower()
+    info = {"installed": True, "running": status.get("BackendState") == "Running", "host": host or None,
+            "serve_path": None, "suggested": None}
+    if not host:
+        return info
+    target, taken = f"127.0.0.1:{port}", set()
+    for site, web in ((read("serve", "status").get("Web") or {}).items()):
+        if site.split(":")[0].lower() != host:
+            continue
+        for path, handler in ((web or {}).get("Handlers") or {}).items():
+            proxy = str((handler or {}).get("Proxy") or "")
+            if proxy.rstrip("/").endswith(target):
+                info["serve_path"] = path
+            taken.add(path.rstrip("/"))
+    # Never suggest a route another service already uses: Serve would replace it.
+    free = "/coding-opus" if "/coding-opus" not in taken else f"/coding-opus-{port}"
+    path = info["serve_path"] or free
+    info["suggested"] = f"https://{host}{path.rstrip('/')}/"
+    info["command"] = None if info["serve_path"] else (
+        f"tailscale serve --bg --set-path {free} http://127.0.0.1:{port}")
+    return info
+
+
+def set_panel_address(home, address):
+    """Save the HTTPS address the phone opens (the QR target) and allow its origin."""
+    config = ensure_config(home)
+    address = str(address or "").strip()
+    try:
+        url = urlsplit(address)
+    except ValueError:
+        url = None
+    if (not url or url.scheme != "https" or not url.hostname or url.username or url.query or url.fragment
+            or not address.isascii() or re.search(r"[\s\\]", address)):
+        raise RemoteError("Use o endereço HTTPS completo do painel, como https://pc.rede.ts.net/coding-opus/.")
+    if not address.endswith("/"):
+        address += "/"
+    origin = f"https://{url.netloc}"
+    config["origins"] = list(dict.fromkeys([*config.get("origins", []), origin]))
+    config["panel_url"] = address
+    write_config(home, config)
+    return remote_status(home)
+
+
 def restart_if_running(home):
     if service_action(home, "status")["running"]:
         service_action(home, "stop")
@@ -553,18 +658,23 @@ def restart_if_running(home):
 
 def service_action(home, command):
     config = json.loads((home / "config.json").read_text(encoding="utf-8"))
-    def health():
+    def probe():
         try:
             # Windows waits out the whole timeout on a closed local port; a short probe answers "stopped" fast.
             socket.create_connection(("127.0.0.1", config["port"]), timeout=0.5).close()
             request = urllib.request.Request(f"http://127.0.0.1:{config['port']}/health",
                                              headers={"Authorization": "Bearer " + config["token"]})
             with urllib.request.urlopen(request, timeout=2) as response:
-                return json.load(response).get("server") == "coding-opus-remote"
-        except (OSError, ValueError):
-            return False
+                body = json.load(response)
+                return body if body.get("server") == "coding-opus-remote" else None
+        except (OSError, ValueError, AttributeError):
+            return None
+    def health():
+        return probe() is not None
     if command == "status":
-        return {"running": health(), "port": config["port"], "projects": list(config["projects"])}
+        body = probe()
+        return {"running": body is not None, "port": config["port"], "projects": list(config["projects"]),
+                "current": body is not None and body.get("code") == CODE_VERSION}
     if command == "stop":
         request = urllib.request.Request(f"http://127.0.0.1:{config['port']}/_stop", data=b"{}",
                                          headers={"Authorization": "Bearer " + config["token"]})

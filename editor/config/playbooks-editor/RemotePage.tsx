@@ -1,8 +1,58 @@
-import { ExternalLink, FolderPlus, Power, Radio, Trash2 } from 'lucide-react'
+import { ExternalLink, FolderPlus, Power, Radio, RotateCw, Save, Search, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { localize as t } from './knowledge-model'
-import { openRemotePanel, readRemote, remoteAction, type RemoteStatus } from './skill-server-api'
+import {
+  detectTailscale,
+  openRemotePanel,
+  readRemote,
+  remoteAction,
+  type RemoteStatus,
+  type TailscaleInfo
+} from './skill-server-api'
 import styles from './Knowledge.module.css'
+
+function TailscaleReport({ info }: { info: TailscaleInfo }): React.JSX.Element {
+  if (!info.installed) {
+    return (
+      <p className={styles.error}>
+        {t('Tailscale não encontrado neste computador.', 'Tailscale was not found on this computer.')}
+      </p>
+    )
+  }
+  if (!info.host) {
+    return (
+      <p className={styles.error}>
+        {t(
+          'O Tailscale não está conectado. Entre na sua conta pelo app do Tailscale.',
+          'Tailscale is not connected. Sign in through the Tailscale app.'
+        )}
+      </p>
+    )
+  }
+  return (
+    <div className={styles.remoteWarning} role="status">
+      <p>
+        {t('Este computador:', 'This computer:')} <code>{info.host}</code>
+      </p>
+      {info.serve_path ? (
+        <p>
+          {t(
+            `O Tailscale Serve já publica o painel em ${info.serve_path}.`,
+            `Tailscale Serve already publishes the panel at ${info.serve_path}.`
+          )}
+        </p>
+      ) : (
+        <p>
+          {t(
+            'O Tailscale Serve ainda não publica o painel. Rode no terminal deste computador:',
+            'Tailscale Serve does not publish the panel yet. Run in a terminal on this computer:'
+          )}{' '}
+          <code>{info.command}</code>
+        </p>
+      )}
+    </div>
+  )
+}
 
 /** Remote control on this computer: service, panel, projects and permission. */
 export function RemotePage({ onLoadSettled }: { onLoadSettled?: () => void }): React.JSX.Element {
@@ -11,6 +61,8 @@ export function RemotePage({ onLoadSettled }: { onLoadSettled?: () => void }): R
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [path, setPath] = useState('')
+  const [address, setAddress] = useState('')
+  const [tailscale, setTailscale] = useState<TailscaleInfo | null>(null)
 
   const load = useCallback(async () => {
     const result = await readRemote().catch((reason: unknown) => ({ ok: false as const, error: String(reason) }))
@@ -73,6 +125,35 @@ export function RemotePage({ onLoadSettled }: { onLoadSettled?: () => void }): R
     }
   }
 
+  const detect = async () => {
+    setBusy(true)
+    setMessage('')
+    try {
+      const result = await detectTailscale()
+      if (result.ok) {
+        setTailscale(result.tailscale)
+        if (result.tailscale.suggested) {
+          setAddress(result.tailscale.suggested)
+        }
+        setError('')
+      } else {
+        setError(result.error)
+      }
+    } catch (reason) {
+      setError(String(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const saveAddress = async (event: FormEvent) => {
+    event.preventDefault()
+    if (await act({ action: 'panel', address: address.trim() }, t('Endereço salvo.', 'Address saved.'))) {
+      setAddress('')
+      setTailscale(null)
+    }
+  }
+
   const missing = status?.projects.filter((project) => !project.exists) ?? []
 
   return (
@@ -132,17 +213,107 @@ export function RemotePage({ onLoadSettled }: { onLoadSettled?: () => void }): R
                   <Power size={15} /> {status.running ? t('Desligar', 'Stop') : t('Ligar', 'Start')}
                 </button>
               ) : null}
-              <p className={styles.muted}>
-                {status.panel
-                  ? t(
-                      'Para o celular: abra o painel neste computador e use “Gerar QR para o celular”. Cada aparelho ganha sua chave, que dá para revogar no próprio painel.',
-                      'For your phone: open the panel on this computer and use “Generate QR for the phone”. Each device gets its own key, revocable in the panel.'
-                    )
-                  : t(
-                      'O celular precisa do endereço do Tailscale Serve: configure com remote_control.py setup --origin https://<pc>.ts.net.',
-                      'Your phone needs the Tailscale Serve address: set it with remote_control.py setup --origin https://<pc>.ts.net.'
+              {status.running && !status.current ? (
+                <div className={styles.remoteWarning} role="status">
+                  <p>
+                    {t(
+                      'O serviço ligado é de uma versão anterior da Coding Opus. Reinicie para usar a atual.',
+                      'The running service is from an earlier Coding Opus version. Restart it to use the current one.'
                     )}
+                  </p>
+                  <button
+                    className={styles.button}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void act({ action: 'restart' }, t('Serviço reiniciado.', 'Service restarted.'))}
+                  >
+                    <RotateCw size={15} /> {t('Reiniciar', 'Restart')}
+                  </button>
+                </div>
+              ) : null}
+            </section>
+            <section className={styles.remoteSection} aria-labelledby="remoteAddress">
+              <h2 id="remoteAddress">{t('Endereço para o celular', 'Address for the phone')}</h2>
+              <p className={styles.muted}>
+                {t(
+                  'O QR do celular abre este endereço do Tailscale. O celular precisa do Tailscale ligado, na mesma conta.',
+                  'The phone QR opens this Tailscale address. The phone needs Tailscale on, in the same account.'
+                )}
               </p>
+              <p>
+                {status.panel_url ? (
+                  <code>{status.panel_url}</code>
+                ) : (
+                  <span className={styles.error}>{t('Ainda não definido.', 'Not set yet.')}</span>
+                )}
+              </p>
+              <button className={styles.button} type="button" disabled={busy} onClick={() => void detect()}>
+                <Search size={15} /> {t('Detectar pelo Tailscale', 'Detect from Tailscale')}
+              </button>
+              {tailscale ? <TailscaleReport info={tailscale} /> : null}
+              <form className={styles.remoteAdd} onSubmit={(event) => void saveAddress(event)}>
+                <label htmlFor="remoteAddressInput">{t('Endereço HTTPS do painel', 'Panel HTTPS address')}</label>
+                <div>
+                  <input
+                    id="remoteAddressInput"
+                    value={address}
+                    onChange={(event) => setAddress(event.target.value)}
+                    placeholder="https://meu-pc.minha-rede.ts.net/coding-opus/"
+                    spellCheck={false}
+                  />
+                  <button className={styles.primary} type="submit" disabled={busy || !address.trim()}>
+                    <Save size={15} /> {t('Salvar', 'Save')}
+                  </button>
+                </div>
+              </form>
+            </section>
+            <section className={styles.remoteSection} aria-labelledby="remoteDevices">
+              <h2 id="remoteDevices">{t('Aparelhos conectados', 'Connected devices')}</h2>
+              <p className={styles.muted}>
+                {t(
+                  'Para incluir um celular, abra o painel neste computador e use “Gerar QR para o celular”.',
+                  'To add a phone, open the panel on this computer and use “Generate QR for the phone”.'
+                )}
+              </p>
+              <ul className={styles.remoteProjects}>
+                {status.devices.map((device) => (
+                  <li key={device.id}>
+                    <div>
+                      <strong>{device.name}</strong>
+                      <small className={styles.muted}>
+                        {device.kind === 'pc' ? t('Computador', 'Computer') : t('Celular', 'Phone')} ·{' '}
+                        {t('desde', 'since')} {new Date(device.created).toLocaleDateString()}
+                      </small>
+                    </div>
+                    <button
+                      className={styles.button}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        const extra =
+                          device.kind === 'pc'
+                            ? t(' Os celulares pareados por ele também saem.', ' Phones it paired are removed too.')
+                            : ''
+                        if (
+                          window.confirm(
+                            t(
+                              `Revogar ${device.name}? Ele precisará de um novo QR para voltar.`,
+                              `Revoke ${device.name}? It will need a new QR to come back.`
+                            ) + extra
+                          )
+                        ) {
+                          void act({ action: 'revoke', id: device.id }, t('Aparelho revogado.', 'Device revoked.'))
+                        }
+                      }}
+                    >
+                      <Trash2 size={15} /> {t('Revogar', 'Revoke')}
+                    </button>
+                  </li>
+                ))}
+                {!status.devices.length ? (
+                  <li className={styles.muted}>{t('Nenhum aparelho pareado.', 'No paired device.')}</li>
+                ) : null}
+              </ul>
             </section>
             <section className={styles.remoteSection} aria-labelledby="remoteProjects">
               <h2 id="remoteProjects">{t('Projetos liberados', 'Allowed projects')}</h2>

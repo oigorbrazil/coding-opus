@@ -50,6 +50,18 @@ A mesma aba lista os projetos liberados, avisa pasta inexistente, adiciona pasta
 completo, remove projetos, liga a escrita e liga/desliga o serviço. Mudanças reiniciam o serviço
 se ele estiver ligado. Faça essas mudanças só a pedido do usuário.
 
+A aba também mostra:
+
+- **Versão do serviço:** `/health` informa um resumo do código em execução (`code`). Se o serviço
+  ligado for de uma versão anterior, a aba avisa e oferece **Reiniciar**.
+- **Endereço para o celular:** **Detectar pelo Tailscale** lê `tailscale status --json` e
+  `tailscale serve status --json` (só leitura), mostra o nome do computador, se o Serve já publica
+  a porta do painel e o endereço sugerido. Se não publicar, mostra o comando `tailscale serve`
+  para o usuário rodar, com uma rota que não sobrescreve outra já publicada. **Salvar** grava
+  `panel_url` e inclui a origem HTTPS em `origins`.
+- **Aparelhos conectados:** lista e revoga aparelhos; com o serviço ligado, a revogação passa
+  pelo servidor, que guarda os aparelhos em memória.
+
 ## Acesso pelo celular e outro computador
 
 Prefira uma rede privada já disponível, como Tailscale. No dispositivo remoto, conecte-se à

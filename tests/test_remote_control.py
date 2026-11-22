@@ -15,7 +15,7 @@ SCRIPTS = ROOT / "skills/coding/scripts" if (ROOT / "skills/coding/scripts").is_
 sys.path.insert(0, str(SCRIPTS))
 from chat_memory import ChatMemory
 from remote_control import (Devices, LocalHTTPServer, Pairing, handler, manage_projects, private_panel_url,
-                            remote_status, rpc)
+                            remote_status, revoke_device, rpc, set_panel_address, tailscale_info)
 from remote_jobs import RemoteError, RemoteJobs
 
 
@@ -289,6 +289,66 @@ class ProjectManagementTest(unittest.TestCase):
             project.rmdir()
             self.assertFalse(remote_status(home)["projects"][0]["exists"])
             self.assertEqual(manage_projects(home, "remove", key="my-app")["projects"], [])
+
+    def test_status_lists_devices_and_revokes_them_while_stopped(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            manage_projects(home, "write", allow_write=False)
+            pc, _ = Devices(home).create("Este computador", "pc", None)
+            Devices(home).create("Android", "phone", pc["id"])
+            status = remote_status(home)
+            self.assertFalse(status["running"])
+            self.assertEqual(sorted(d["name"] for d in status["devices"]), ["Android", "Este computador"])
+            revoke_device(home, pc["id"])
+            self.assertEqual(remote_status(home)["devices"], [])
+            with self.assertRaises(RemoteError):
+                revoke_device(home, pc["id"])
+
+    def test_panel_address_allows_its_origin(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            status = set_panel_address(home, "https://pc.rede.ts.net/coding-opus")
+            self.assertEqual(status["panel_url"], "https://pc.rede.ts.net/coding-opus/")
+            self.assertTrue(status["panel"])
+            for bad in ("http://pc.rede.ts.net/", "https://pc.rede.ts.net/?token=x", "não é url"):
+                with self.assertRaises(RemoteError):
+                    set_panel_address(home, bad)
+
+
+class TailscaleInfoTest(unittest.TestCase):
+    def fake(self, outputs):
+        def run(command, **_):
+            key = " ".join(command[1:-1])
+            return subprocess.CompletedProcess(command, 0 if key in outputs else 1, json.dumps(outputs.get(key, {})), "")
+        return run
+
+    def test_finds_the_serve_route_to_the_panel(self):
+        run = self.fake({
+            "status": {"BackendState": "Running", "Self": {"DNSName": "PC.rede.ts.net."}},
+            "serve status": {"Web": {"pc.rede.ts.net:443": {"Handlers": {
+                "/outro": {"Proxy": "http://127.0.0.1:3000"}, "/painel": {"Proxy": "http://127.0.0.1:8769"}}}}},
+        })
+        info = tailscale_info(8769, run=run, exe="tailscale")
+        self.assertEqual((info["host"], info["serve_path"], info["command"]), ("pc.rede.ts.net", "/painel", None))
+        self.assertEqual(info["suggested"], "https://pc.rede.ts.net/painel/")
+
+    def test_suggests_the_serve_command_when_not_published(self):
+        run = self.fake({"status": {"BackendState": "Running", "Self": {"DNSName": "pc.rede.ts.net."}}})
+        info = tailscale_info(8769, run=run, exe="tailscale")
+        self.assertIsNone(info["serve_path"])
+        self.assertEqual(info["suggested"], "https://pc.rede.ts.net/coding-opus/")
+        self.assertIn("--set-path /coding-opus http://127.0.0.1:8769", info["command"])
+        self.assertEqual(tailscale_info(8769, run=self.fake({}), exe="tailscale")["host"], None)
+
+    def test_never_suggests_a_route_another_service_uses(self):
+        run = self.fake({
+            "status": {"BackendState": "Running", "Self": {"DNSName": "pc.rede.ts.net."}},
+            "serve status": {"Web": {"pc.rede.ts.net:443": {"Handlers": {
+                "/coding-opus": {"Proxy": "http://127.0.0.1:8769"}}}}},
+        })
+        info = tailscale_info(8791, run=run, exe="tailscale")
+        self.assertEqual(info["suggested"], "https://pc.rede.ts.net/coding-opus-8791/")
+        self.assertIn("--set-path /coding-opus-8791 ", info["command"])
 
 
 if __name__ == "__main__":

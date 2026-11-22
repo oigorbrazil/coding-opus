@@ -789,3 +789,19 @@
   gap: 8px;
   font-size: 13px;
 }
+
+.remoteWarning {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  font-size: 13px;
+}
+
+.remoteSection code {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
