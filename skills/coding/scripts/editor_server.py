@@ -129,6 +129,15 @@ class EditorState:
         except updates.UpdateError as error:
             return {"ok": False, "error": str(error)}
 
+    def apply_update(self) -> Dict[str, Any]:
+        """Replace the installed skill's outdated files with GitHub's, each checked by hash first."""
+        import updates
+
+        try:
+            return {"ok": True, **updates.apply()}
+        except updates.UpdateError as error:
+            return {"ok": False, "error": str(error)}
+
     def automations(self) -> Dict[str, Any]:
         home = self.remote_home()
         try:
@@ -312,7 +321,7 @@ def make_handler(state: EditorState, port: int):
             path = self.path.split("?", 1)[0]
             if path not in ("/api/playbooks", "/api/accounts/order", "/api/playbooks/generate",
                             "/api/accounts/manage", "/api/workspace", "/api/library", "/api/remote/open",
-                            "/api/remote", "/api/automations"):
+                            "/api/remote", "/api/automations", "/api/updates"):
                 self._json(404, {"error": "not found"})
                 return
             try:
@@ -339,6 +348,12 @@ def make_handler(state: EditorState, port: int):
                     self._json(415, {"ok": False, "error": "application/json required"})
                     return
                 self._json(200, state.automation_action(body))
+                return
+            if path == "/api/updates":
+                if self.headers.get_content_type() != "application/json":
+                    self._json(415, {"ok": False, "error": "application/json required"})
+                    return
+                self._json(200, state.apply_update())
                 return
             if path == "/api/remote/open":
                 if self.headers.get_content_type() != "application/json":

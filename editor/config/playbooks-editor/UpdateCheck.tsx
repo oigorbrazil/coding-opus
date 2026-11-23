@@ -1,10 +1,16 @@
-import { CircleCheck, CloudDownload, LoaderCircle, X } from 'lucide-react'
+import { CircleCheck, CloudDownload, Download, LoaderCircle, X } from 'lucide-react'
 import { useState } from 'react'
 import { localize as t } from './knowledge-model'
-import { checkUpdates, type UpdateReport } from './skill-server-api'
+import { applyUpdate, checkUpdates, type AppliedUpdate, type UpdateReport } from './skill-server-api'
 import styles from './Knowledge.module.css'
 
-type State = { kind: 'idle' } | { kind: 'checking' } | { kind: 'done'; report: UpdateReport } | { kind: 'error'; error: string }
+type State =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'done'; report: UpdateReport }
+  | { kind: 'applying'; report: UpdateReport }
+  | { kind: 'applied'; result: AppliedUpdate }
+  | { kind: 'error'; error: string }
 
 function day(iso: string): string {
   const date = new Date(iso)
@@ -13,7 +19,9 @@ function day(iso: string): string {
     : date.toLocaleString(undefined, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-/** "Check for updates": compares the installed skill with GitHub, read-only. */
+const describe = (latest: UpdateReport['latest']) => `${latest.commit} · ${day(latest.date)} · “${latest.title}”`
+
+/** "Check for updates": compares the installed skill with GitHub, and updates it in place on request. */
 export function useUpdateCheck() {
   const [state, setState] = useState<State>({ kind: 'idle' })
 
@@ -27,11 +35,22 @@ export function useUpdateCheck() {
     }
   }
 
+  const install = async (report: UpdateReport) => {
+    setState({ kind: 'applying', report })
+    try {
+      const result = await applyUpdate()
+      setState(result.ok ? { kind: 'applied', result } : { kind: 'error', error: result.error })
+    } catch (reason) {
+      setState({ kind: 'error', error: String(reason) })
+    }
+  }
+
+  const busy = state.kind === 'checking' || state.kind === 'applying'
   const button = (
     <button
       type="button"
       className={styles.updateButton}
-      disabled={state.kind === 'checking'}
+      disabled={busy}
       title={t('Compara a Coding Opus instalada com a do GitHub', 'Compares the installed Coding Opus with GitHub')}
       onClick={() => void run()}
     >
@@ -49,9 +68,22 @@ export function useUpdateCheck() {
   let text: React.ReactNode = null
   if (state.kind === 'error') {
     text = <span className={styles.error}>{state.error}</span>
-  } else if (state.kind === 'done') {
+  } else if (state.kind === 'applied') {
+    const { result } = state
+    const count = result.updated.length
+    text = (
+      <span>
+        <CircleCheck size={14} aria-hidden="true" className={styles.updateOk} />{' '}
+        <strong>{t('Coding Opus atualizada.', 'Coding Opus updated.')}</strong>{' '}
+        {t(
+          `${count} ${count === 1 ? 'arquivo substituído' : 'arquivos substituídos'}, agora igual a ${describe(result.latest)}. Feche e abra o editor de novo para usar a versão nova; os chats novos já a usam.`,
+          `${count} ${count === 1 ? 'file replaced' : 'files replaced'}, now the same as ${describe(result.latest)}. Close and reopen the editor to use the new version; new chats already use it.`
+        )}
+      </span>
+    )
+  } else if (state.kind === 'done' || state.kind === 'applying') {
     const { report } = state
-    const latest = `${report.latest.commit} · ${day(report.latest.date)} · “${report.latest.title}”`
+    const latest = describe(report.latest)
     const count = report.changed.length + report.missing.length
     text = report.upToDate ? (
       <span>
@@ -61,17 +93,35 @@ export function useUpdateCheck() {
           `Coding Opus is up to date${report.version ? ` (version ${report.version})` : ''}: same as the latest on GitHub, ${latest}.`
         )}
       </span>
+    ) : report.canApply ? (
+      <span className={styles.updateAvailable}>
+        <span>
+          <strong>{t('Há uma atualização.', 'An update is available.')}</strong>{' '}
+          {t(
+            `${count} ${count === 1 ? 'arquivo difere' : 'arquivos diferem'} da última versão do GitHub (${latest}).`,
+            `${count} ${count === 1 ? 'file differs' : 'files differ'} from the latest GitHub version (${latest}).`
+          )}
+        </span>
+        <button
+          type="button"
+          className={styles.updateButton}
+          disabled={state.kind === 'applying'}
+          onClick={() => void install(report)}
+        >
+          {state.kind === 'applying' ? (
+            <LoaderCircle size={15} className={styles.spin} aria-hidden="true" />
+          ) : (
+            <Download size={15} aria-hidden="true" />
+          )}
+          {state.kind === 'applying' ? t('Atualizando…', 'Updating…') : t('Atualizar agora', 'Update now')}
+        </button>
+      </span>
     ) : (
       <span>
         <strong>{t('Há uma atualização.', 'An update is available.')}</strong>{' '}
         {t(
-          `${count} ${count === 1 ? 'arquivo da sua cópia difere' : 'arquivos da sua cópia diferem'} da versão do GitHub (${latest}). Para atualizar, rode de novo `,
-          `${count} ${count === 1 ? 'file in your copy differs' : 'files in your copy differ'} from the GitHub version (${latest}). To update, run `
-        )}
-        <code>npx skills add oigorbrazil/coding-opus --skill coding -g</code>
-        {t(
-          '; com o plugin do Claude Code, atualize o marketplace em /plugin.',
-          ' again; with the Claude Code plugin, update the marketplace in /plugin.'
+          `${count} ${count === 1 ? 'arquivo difere' : 'arquivos diferem'} da versão do GitHub (${latest}). Esta cópia é o plugin do Claude Code ou um repositório git: atualize o marketplace em /plugin, ou rode git pull.`,
+          `${count} ${count === 1 ? 'file differs' : 'files differ'} from the GitHub version (${latest}). This copy is the Claude Code plugin or a git checkout: update the marketplace in /plugin, or run git pull.`
         )}
       </span>
     )
@@ -86,6 +136,7 @@ export function useUpdateCheck() {
           className={styles.iconButton}
           aria-label={t('Fechar', 'Close')}
           title={t('Fechar', 'Close')}
+          disabled={state.kind === 'applying'}
           onClick={() => setState({ kind: 'idle' })}
         >
           <X size={14} />

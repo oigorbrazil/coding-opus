@@ -62,6 +62,49 @@ class UpdateCheckTest(unittest.TestCase):
         with self.assertRaises(updates.UpdateError):
             updates.check(self.root, fetch=lambda url: {"unexpected": True})
 
+    def download(self, url):
+        self.assertTrue(url.startswith(updates.RAW + "/a931c1e5f00d/skills/coding/"), url)
+        return self.files[url.rsplit("/skills/coding/", 1)[1]]
+
+    def test_apply_replaces_only_the_outdated_files_after_checking_them(self):
+        self.files = {"scripts/a.py": b"print('new')\n", "scripts/new%20file.py": b"x = 1\n"}
+        self.remote["skills/coding/scripts/a.py"] = updates.blob_hash(self.files["scripts/a.py"])
+        self.remote["skills/coding/scripts/new file.py"] = updates.blob_hash(self.files["scripts/new%20file.py"])
+        before = (self.root / "icon.png").stat().st_mtime_ns
+        result = updates.apply(self.root, fetch=self.fetch, download=self.download)
+        self.assertEqual(result["updated"], ["scripts/a.py", "scripts/new file.py"])
+        self.assertEqual((self.root / "scripts" / "a.py").read_bytes(), b"print('new')\n")
+        self.assertEqual((self.root / "scripts" / "new file.py").read_bytes(), b"x = 1\n")
+        self.assertEqual((self.root / "icon.png").stat().st_mtime_ns, before)
+        self.assertTrue(updates.check(self.root, fetch=self.fetch)["upToDate"])
+        self.assertEqual(updates.apply(self.root, fetch=self.fetch, download=self.download)["updated"], [])
+
+    def test_a_download_that_does_not_match_changes_nothing(self):
+        self.files = {"scripts/a.py": b"tampered\n", "scripts/b.py": b"fine\n"}
+        self.remote["skills/coding/scripts/a.py"] = updates.blob_hash(b"print('new')\n")
+        self.remote["skills/coding/scripts/b.py"] = updates.blob_hash(b"fine\n")
+        with self.assertRaises(updates.UpdateError):
+            updates.apply(self.root, fetch=self.fetch, download=self.download)
+        self.assertFalse((self.root / "scripts" / "b.py").exists())
+        self.assertEqual((self.root / "scripts" / "a.py").read_bytes(), b"print('a')\r\nprint('b')\r\n")
+
+    def test_paths_that_escape_the_skill_are_refused(self):
+        self.remote["skills/coding/../evil.py"] = updates.blob_hash(b"x")
+        with self.assertRaises(updates.UpdateError):
+            updates.apply(self.root, fetch=self.fetch, download=lambda url: b"x")
+        self.assertFalse((self.root.parent / "evil.py").exists())
+
+    def test_plugin_and_git_copies_update_with_their_own_tools(self):
+        self.assertEqual(updates.install_kind(self.root), "skills")
+        self.assertTrue(updates.check(self.root, fetch=self.fetch)["canApply"])
+        (self.root / ".git").mkdir()
+        self.assertEqual(updates.install_kind(self.root), "git")
+        self.assertFalse(updates.check(self.root, fetch=self.fetch)["canApply"])
+        with self.assertRaisesRegex(updates.UpdateError, "git pull"):
+            updates.apply(self.root, fetch=self.fetch, download=self.download)
+        plugin = Path(self.root.anchor, "home", ".claude", "plugins", "cache", "coding")
+        self.assertEqual(updates.install_kind(plugin), "plugin")
+
     def test_blob_hash_matches_git(self):
         # `git hash-object` of "hello\n"
         self.assertEqual(updates.blob_hash(b"hello\n"), "ce013625030ba8dba906f756967f9e9ca394464a")

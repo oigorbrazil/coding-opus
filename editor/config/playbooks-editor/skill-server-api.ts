@@ -247,9 +247,24 @@ export type UpdateReport = {
   changed: string[]
   missing: string[]
   howto: string
+  /** false for a Claude Code plugin copy or a git checkout: those update with their own tools. */
+  canApply: boolean
 }
 
 export const checkUpdates = () =>
   call<({ ok: true } & UpdateReport) | { ok: false; error: string }>('/api/updates', {
     signal: AbortSignal.timeout(30000)
+  })
+
+export type AppliedUpdate = {
+  updated: string[]
+  version: string | null
+  latest: UpdateReport['latest']
+}
+
+export const applyUpdate = () =>
+  call<({ ok: true } & AppliedUpdate) | { ok: false; error: string }>('/api/updates', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'apply' }),
+    signal: AbortSignal.timeout(120000)
   })
