@@ -120,6 +120,15 @@ class EditorState:
             except (OSError, ValueError, KeyError, RemoteError) as error:
                 return {"ok": False, "error": str(error)}
 
+    def updates(self) -> Dict[str, Any]:
+        """Compare the installed skill with GitHub (read-only)."""
+        import updates
+
+        try:
+            return {"ok": True, **updates.check()}
+        except updates.UpdateError as error:
+            return {"ok": False, "error": str(error)}
+
     def automations(self) -> Dict[str, Any]:
         home = self.remote_home()
         try:
@@ -281,6 +290,8 @@ def make_handler(state: EditorState, port: int):
                     self._json(200, state.remote())
                 elif path == "/api/automations":
                     self._json(200, state.automations())
+                elif path == "/api/updates":
+                    self._json(200, state.updates())
                 elif path == "/api/accounts":
                     self._json(200, state.accounts())
                 elif path == "/api/usage":

@@ -6,6 +6,7 @@ import { AutomationsPage } from './AutomationsPage'
 import { StartupSplash } from './StartupSplash'
 import { localize as t } from './knowledge-model'
 import { RemotePage } from './RemotePage'
+import { useUpdateCheck } from './UpdateCheck'
 import styles from './Knowledge.module.css'
 
 const STAMP_POLL_MS = 3000
@@ -42,6 +43,7 @@ export function CodingOpusEditorApp(): React.JSX.Element {
   // Set while this editor's own save is landing, so the stamp it moves does not remount the editor.
   const selfSaveRef = useRef(false)
   const pt = navigator.language.toLowerCase().startsWith('pt')
+  const updates = useUpdateCheck()
 
   const navigate = (next: typeof view, item: string | null = null) => {
     const params = new URLSearchParams(window.location.hash.slice(1))
@@ -127,7 +129,9 @@ export function CodingOpusEditorApp(): React.JSX.Element {
               <Icon size={15} /> {name}
             </button>
           ))}
+          {updates.button}
         </nav>
+        {updates.notice}
         {outsideChange && view === 'playbooks' ? (
           <div className="editor-notice">
             {pt

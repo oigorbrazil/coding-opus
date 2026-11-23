@@ -239,3 +239,17 @@ export const automationRuns = (id: string) =>
     method: 'POST',
     body: JSON.stringify({ action: 'runs', id })
   })
+
+export type UpdateReport = {
+  upToDate: boolean
+  version: string | null
+  latest: { commit: string; date: string; title: string }
+  changed: string[]
+  missing: string[]
+  howto: string
+}
+
+export const checkUpdates = () =>
+  call<({ ok: true } & UpdateReport) | { ok: false; error: string }>('/api/updates', {
+    signal: AbortSignal.timeout(30000)
+  })

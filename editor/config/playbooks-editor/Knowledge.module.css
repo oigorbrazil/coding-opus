@@ -1227,3 +1227,41 @@
 .remindersPane > .remoteWarning {
   margin-bottom: 18px;
 }
+
+.updateButton {
+  margin-left: auto;
+  color: var(--fg-muted);
+}
+
+.updateNotice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  line-height: 1.5;
+}
+
+.updateNotice strong {
+  color: var(--fg);
+}
+
+.updateOk {
+  vertical-align: -2px;
+  color: var(--status-success);
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
