@@ -382,6 +382,35 @@ def serve(policy_path: Path, port: int, token: str) -> None:
         state.account_manager.close()
 
 
+SANDBOX_BLOCKED = (
+    "O sandbox de quem rodou o comando bloqueou o servidor local do editor (127.0.0.1). "
+    "Abra o app Coding Opus fora do chat (Launchpad, Spotlight, menu Iniciar ou de aplicativos), "
+    "ou rode o comando fora do sandbox."
+)
+CODEX_SANDBOX_HINT = (
+    " No Codex: aprove rodar o comando fora do sandbox ou habilite network_access na seção "
+    "[sandbox_workspace_write] de ~/.codex/config.toml."
+)
+
+
+def sandbox_blocked(cause: object) -> bool:
+    """A local bind or connect refused by a sandbox (Codex's seatbelt, Claude Code's sandbox...),
+    not a busy port: EPERM/EACCES, as an exception or in the server's error output."""
+    import errno
+
+    if isinstance(cause, OSError):
+        return cause.errno in (errno.EPERM, errno.EACCES)
+    text = str(cause)
+    return "Operation not permitted" in text or "PermissionError" in text or "Permission denied" in text
+
+
+def sandbox_message() -> str:
+    import os
+
+    codex = bool(os.environ.get("CODEX_SANDBOX") or os.environ.get("CODEX_SANDBOX_NETWORK_DISABLED"))
+    return SANDBOX_BLOCKED + (CODEX_SANDBOX_HINT if codex else "")
+
+
 def launch(policy_path: Path, open_browser: bool) -> Dict[str, Any]:
     """Start the server as a detached process, wait until it answers, and open the page."""
     import os
@@ -394,50 +423,64 @@ def launch(policy_path: Path, open_browser: bool) -> Dict[str, Any]:
     try:
         policy_path.parent.mkdir(parents=True, exist_ok=True)
         log = log_path.open("ab")
+        start = log.tell()
     except OSError:
-        log = None
+        log, start = None, 0
     options: Dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
                                "stderr": log if log is not None else subprocess.DEVNULL}
 
     def failed() -> SystemExit:
         try:
-            tail = log_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-6:]
+            with log_path.open("rb") as handle:  # only what this launch wrote, not older runs
+                handle.seek(start)
+                tail = handle.read().decode("utf-8", errors="replace").strip().splitlines()[-6:]
         except OSError:
             tail = []
+        if sandbox_blocked("\n".join(tail)):
+            return SystemExit(sandbox_message())
         return SystemExit("the editor server did not start" + (": " + " | ".join(tail) if tail else ""))
 
     if os.name == "nt":
         options["creationflags"] = 0x00000008 | 0x00000200 | 0x08000000  # detached, new group, no window
     else:
         options["start_new_session"] = True
-    deadline = time.monotonic() + 30  # slow CI machines can take a while to bind
-    for attempt in range(3):
-        # The port is free when probed but released before the server binds it; another process can
-        # take it in between, and the server then exits at once. Try again on a fresh port.
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1]
-        command = [sys.executable, str(Path(__file__).resolve()), "--policy", str(policy_path),
-                   "--port", str(port), "--token=" + token]  # a token may start with "-"
-        process = subprocess.Popen(command, **options)
-        started = False
-        while not started:
+    def start_server() -> Tuple[int, Any]:
+        deadline = time.monotonic() + 30  # slow CI machines can take a while to bind
+        for _attempt in range(3):
+            # The port is free when probed but released before the server binds it; another process
+            # can take it in between, and the server then exits at once. Try again on a fresh port.
             try:
-                with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                    started = True
-            except OSError:
-                if process.poll() is not None:
-                    break
-                if time.monotonic() > deadline:
-                    process.kill()
-                    raise failed()
-                time.sleep(0.2)
-        if started:
-            break
-    else:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                    probe.bind(("127.0.0.1", 0))
+                    port = probe.getsockname()[1]
+            except OSError as error:
+                if sandbox_blocked(error):
+                    raise SystemExit(sandbox_message()) from error
+                raise
+            command = [sys.executable, str(Path(__file__).resolve()), "--policy", str(policy_path),
+                       "--port", str(port), "--token=" + token]  # a token may start with "-"
+            process = subprocess.Popen(command, **options)
+            while True:
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                        return port, process
+                except OSError as error:
+                    if sandbox_blocked(error):
+                        process.kill()
+                        raise SystemExit(sandbox_message()) from error
+                    if process.poll() is not None:
+                        break
+                    if time.monotonic() > deadline:
+                        process.kill()
+                        raise failed()
+                    time.sleep(0.2)
         raise failed()
-    if log is not None:
-        log.close()  # the server keeps its own copy of the handle
+
+    try:
+        port, process = start_server()
+    finally:
+        if log is not None:
+            log.close()  # the server keeps its own copy of the handle
     url = f"http://127.0.0.1:{port}/#token={token}"
     opened = False
     if open_browser:

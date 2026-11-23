@@ -206,5 +206,63 @@ class EditorServerTest(unittest.TestCase):
         self.assertIn("invalid playbooks", result.stderr + result.stdout)
 
 
+
+class SandboxBlockedTest(unittest.TestCase):
+    """A sandbox that refuses the local port gets a clear way out, not a traceback."""
+
+    def setUp(self):
+        sys.path.insert(0, str(SCRIPT.parent))
+        import editor_server
+
+        self.server = editor_server
+        temp = tempfile.TemporaryDirectory(prefix="coding-opus-sandbox-")
+        self.addCleanup(temp.cleanup)
+        self.policy = Path(temp.name) / "coding-opus-orchestrate.json"
+        (Path(temp.name) / "editor-server.log").write_text("Old PermissionError from another day\n", encoding="utf-8")
+
+    def child(self, stderr_line, code):
+        import subprocess as real
+        from unittest import mock
+
+        original = real.Popen
+
+        def fake(command, **options):
+            script = f"import sys; sys.stderr.write({stderr_line!r} + '\n'); sys.exit({code})"
+            return original([sys.executable, "-c", script], **options)
+
+        return mock.patch("subprocess.Popen", side_effect=fake)
+
+    def test_a_refused_port_probe_explains_the_sandbox(self):
+        from unittest import mock
+
+        with mock.patch("socket.socket.bind", side_effect=PermissionError(1, "Operation not permitted")), \
+                mock.patch.dict(os.environ, {"CODEX_SANDBOX": "seatbelt"}):
+            with self.assertRaises(SystemExit) as raised:
+                self.server.launch(self.policy, open_browser=False)
+        self.assertIn("sandbox", str(raised.exception.code))
+        self.assertIn("network_access", str(raised.exception.code))
+
+    def test_a_server_refused_by_the_sandbox_explains_it(self):
+        from unittest import mock
+
+        with self.child("PermissionError: [Errno 1] Operation not permitted", 1), \
+                mock.patch.dict(os.environ, {"CODEX_SANDBOX": "", "CODEX_SANDBOX_NETWORK_DISABLED": ""}):
+            with self.assertRaises(SystemExit) as raised:
+                self.server.launch(self.policy, open_browser=False)
+        message = str(raised.exception.code)
+        self.assertIn("Abra o app Coding Opus", message)
+        self.assertNotIn("network_access", message)
+
+    def test_other_failures_keep_their_own_error(self):
+        # Only this launch's output counts: the old PermissionError in the log is ignored.
+        with self.child("ValueError: playbooks unreadable", 1):
+            with self.assertRaises(SystemExit) as raised:
+                self.server.launch(self.policy, open_browser=False)
+        message = str(raised.exception.code)
+        self.assertIn("did not start", message)
+        self.assertIn("playbooks unreadable", message)
+        self.assertNotIn("sandbox", message)
+
+
 if __name__ == "__main__":
     unittest.main()

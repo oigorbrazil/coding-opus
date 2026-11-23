@@ -106,7 +106,7 @@ a referência numa cópia diferente.
 | tarefa, revisão com retorno, “peça ao Codex/Claude…”                              | guia `orquestracao`; usar worker do CLI nomeado                                             |
 | “varre o projeto inteiro”, “traduza para todos os idiomas”, “porte com os testes” | considerar unidades dos playbooks; manter com o lead se não houver independência útil       |
 | `handoff <tarefa>`, “deixa fazendo em outra branch”                               | guia `handoff`; iniciar e devolver caminhos, sem esperar nem integrar                       |
-| `editor`                                                                          | abrir o editor com o runner fixado; instala o app (Windows) ou o atalho (Mac, Linux) se estiver ausente |
+| `editor`                                                                          | abrir o editor com o runner fixado; instala o app (Windows) ou o atalho (Mac, Linux) se estiver ausente. Se o sandbox bloquear o servidor local, repasse as saídas da mensagem; não o contorne |
 | `terminals on` ou `terminals off`                                                 | `policy set --terminals on` ou `off`; abrir terminais que só acompanham os logs dos workers |
 | `report`, `status`, `usage`, `models`, `list`, `stop`, `clean`, `budget`, `mark`  | comando correspondente; detalhes em `guide orquestracao`                                    |
 | `on`, `off`, `passive`, `save`, `max`, `freestyle`, `careful`                     | guia `orquestracao` antes de alterar o modo                                                 |
