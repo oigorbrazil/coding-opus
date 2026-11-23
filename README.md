@@ -1,104 +1,133 @@
 # Coding Opus
 ![skill](https://img.shields.io/badge/skill-v37-1f6feb) ![license](https://img.shields.io/badge/license-MIT-555)
 
-Uma skill global para Claude Code e Codex que melhora a performance e a economia da IA com dois pilares:
+Uma skill global para Claude Code e Codex que faz a IA lembrar do que já foi decidido e gastar
+menos para entregar o mesmo trabalho.
 
-| Pilar | O que faz |
-| --- | --- |
-| **1. Memória** | Um *second brain* global em `Documentos/second brain`, com decisões, estudos e notas que a IA consulta antes de responder. Ela para de redescobrir o que já sabe e de contradizer o que já foi decidido. |
-| **2. Orquestração inteligente** | Planeja, entrega unidades limitadas para os workers mais baratos e capazes (Codex, Claude Code, Antigravity, Kimi ou qualquer CLI), vigia a cota e relata o que cada worker fez e custou. |
+- **Memória.** Um *second brain* em `Documentos/second brain` com decisões, estudos e notas. A IA
+  consulta antes de responder, em vez de redescobrir o que já sabe ou contradizer o que já foi
+  decidido.
+- **Orquestração.** Planeja, entrega partes limitadas do trabalho para o worker mais barato que dá
+  conta (Codex, Claude Code, Antigravity, Kimi ou outro CLI), vigia a cota de cada conta e relata o
+  que cada worker fez e custou.
 
-## Como os pilares trabalham juntos
+## Como funciona
 
-1. **Lembrar antes de agir.** Em todo pedido substantivo, a skill busca no second brain pelo frontmatter e lê no máximo cinco notas.
-2. **Planejar com o que já foi decidido.** Numa orquestração, as decisões que valem para o projeto viram restrições do plano.
-3. **Workers enxutos.** Cada worker recebe só os caminhos das notas que valem para a sua unidade, nunca a conversa inteira, e não escreve no second brain.
-4. **Registrar o que aprendeu.** No fim, a skill oferece salvar o resumo e o relatório de custo como nota. Ela mostra uma prévia e só grava com o seu ok.
+1. **Lembra antes de agir.** Em todo pedido substantivo, busca no second brain pelo frontmatter e
+   lê no máximo cinco notas.
+2. **Planeja com o que já foi decidido.** As decisões que valem para o projeto viram restrições do
+   plano.
+3. **Workers enxutos.** Cada worker recebe só a sua parte e as notas que valem para ela, nunca a
+   conversa inteira, e não escreve no second brain.
+4. **Registra o que aprendeu.** No fim, oferece salvar o resumo e o custo como nota. Mostra uma
+   prévia e só grava com o seu ok.
 
 ## Instalação
 
-Requer Python 3.9+. Node.js só é necessário para o MCP opcional.
+Requer Python 3.9 ou mais novo.
 
-**Como skill global:** copie `skills/coding` para `~/.claude/skills/` (Claude Code) ou `~/.agents/skills/` (Codex).
-
-```sh
-npx skills add oigorbrazil/coding-opus --skill coding -g
-```
-
-**Como plugin** (Claude Code, ativa também o hook do modo passivo):
+**Como plugin do Claude Code** (inclui os hooks):
 
 ```sh
 /plugin marketplace add oigorbrazil/coding-opus
 /plugin install coding@coding
 ```
 
-Depois, em qualquer sessão:
+**Como skill** (Claude Code ou Codex):
 
-```text
-/coding install
+```sh
+npx skills add oigorbrazil/coding-opus --skill coding -g
 ```
 
-A instalação:
+Ou copie `skills/coding` para `~/.claude/skills/` (Claude Code) ou `~/.agents/skills/` (Codex).
 
-- cria `second brain` dentro da sua pasta Documentos (a real, mesmo redirecionada pelo OneDrive), com pastas numeradas, `HOME.md` e templates. **Se a pasta já existe, ela é usada como está e nada é criado dentro dela**;
-- grava as regras de consulta no bloco `coding-opus` de `~/.claude/CLAUDE.md` e de `~/.codex/AGENTS.md`, preservando o resto dos arquivos;
-- registra opcionalmente o MCP `second-brain` em escopo de usuário.
+### Primeiro uso
 
-Nada é escrito nos seus projetos. Para usar outro local, defina `CODING_OPUS_BRAIN` ou passe `--brain`.
+Não há comando de instalação. No primeiro pedido depois de instalar o plugin, ou no primeiro
+`/coding` quando instalada como skill, a Coding Opus se configura e avisa em uma linha:
 
-Instale só uma forma e remova as skills `alethe`, `obsidian`, `obsidian-second-brain`, `alethe-second-brain` ou `coding-opus` separadas, se existirem: esta as substitui.
+- cria `second brain` na sua pasta Documentos (a real, mesmo redirecionada pelo OneDrive), com
+  pastas numeradas, `HOME.md` e templates. **Se a pasta já existe, ela é usada como está e nada é
+  criado dentro dela**;
+- grava as regras de consulta num bloco `coding-opus` de `~/.claude/CLAUDE.md` e de
+  `~/.codex/AGENTS.md`, preservando o resto dos arquivos.
+
+Nada é escrito nos seus projetos.
+
+| Para | Faça |
+| --- | --- |
+| usar outro local para o second brain | defina `CODING_OPUS_BRAIN` antes do primeiro uso |
+| não configurar sozinha | defina `CODING_OPUS_AUTO_SETUP=0` |
+| refazer a configuração ou registrar o MCP `second-brain` (requer Node.js) | `/coding install` |
+
+## Editor de Playbooks
+
+`/coding editor` abre o editor visual, que roda só no seu computador (`127.0.0.1`). No Windows ele
+vira um aplicativo com atalho no menu Iniciar; no macOS e no Linux, um atalho que abre numa janela
+própria do Chrome, Edge, Chromium ou Brave. Abas:
+
+| Aba | O que faz |
+| --- | --- |
+| **Playbooks** | desenha e edita as estratégias de orquestração e o roteamento de tarefas, com prévia por provedor e simulação de cota |
+| **Second Brain** | navega, busca e cria notas |
+| **Memória** | conversas registradas entre IAs, com checkpoints e o prompt para continuar em outro provedor |
+| **Automações** | pedidos que um agente executa sozinho no horário escolhido, com histórico de cada execução |
+| **Controle remoto** | serviço para acompanhar e iniciar tarefas pelo celular, pela sua rede do Tailscale |
 
 ## Comandos
 
 | Pedido | O que faz |
 | --- | --- |
-| `/coding install` | cria ou reaproveita o second brain e as regras globais |
-| `/coding onde` | mostra onde está o second brain |
-| `/coding consultar <termos>` | busca notas e cita os caminhos |
 | `/coding <tarefa>` | orquestra a tarefa usando a memória |
+| `/coding consultar <termos>` | busca notas e cita os caminhos |
 | `/coding registrar` | grava a orquestração atual como nota, depois da prévia |
+| `/coding onde` | mostra onde está o second brain |
 | `/coding report` | o que a orquestração fez e custou |
-| `/coding setup` | checa provedores e a política da orquestração e faz o onboarding |
-| `/coding doctor` | registra a cópia do runner e o Python da sessão; reutilize `runtime.command` |
-| `/coding guide [fase]` | lista ou imprime só a referência da fase, da mesma cópia do runner |
-| `/coding handoff <tarefa>` | inicia um worker numa branch/worktree própria, sem esperar integração |
+| `/coding handoff <tarefa>` | inicia um worker numa branch e worktree próprias, sem esperar integração |
+| `/coding editor` | abre o editor de Playbooks |
+| `/coding setup` | confere provedores e política e guia a configuração da orquestração |
+| `/coding doctor` | registra a cópia do runner e o Python da sessão |
+| `/coding guide [fase]` | lista ou imprime a referência de uma fase |
+| `/coding install` | refaz a configuração (ela já acontece sozinha no primeiro uso) |
 
-No Codex, use `$coding`. Como plugin, o Claude Code mostra a skill com o prefixo do plugin (`/coding:coding`).
+No Codex, use `$coding`. Como plugin, o Claude Code mostra a skill como `/coding:coding`. Os
+comandos curtos da orquestração (`status`, `usage`, `stop`, `save`, `max`, `passive`...) também
+valem.
 
-Os outros comandos curtos da orquestração (`status`, `usage`, `stop`, `mode on`, `save`, `max`...) continuam valendo.
+Cada worker abre por padrão um terminal que só acompanha o log dele. `/coding terminals on|off` muda
+esse padrão, `run --terminals` e `--no-terminals` valem só para uma rodada, e
+`CODING_OPUS_TERMINALS=0` desliga todos.
 
-Cada worker abre por padrão um terminal que acompanha o log dele. `/coding terminals on|off` muda esse padrão; `run --terminals` e
-`--no-terminals` valem só para a onda. `CODING_OPUS_TERMINALS=0` desativa todos eles.
+## Onde ficam os dados
+
+| O quê | Onde |
+| --- | --- |
+| notas | `Documentos/second brain` (ou `CODING_OPUS_BRAIN`) |
+| política, playbooks, preços, cota, histórico, automações e controle remoto | `%USERPROFILE%\.coding-opus` no Windows, fora do AppData, que o app Claude para Windows virtualiza; `~/.config/coding-opus` no macOS e no Linux |
 
 ## Estrutura
 
 ```text
 skills/coding/
-├── SKILL.md                 os dois pilares e como se unem (pt-BR)
-├── references/
-│   ├── memoria.md           pilar 1: instalação global, consulta e escrita
-│   ├── obsidian-mcp.md      MCP second-brain em escopo de usuário
-│   ├── orquestracao.md      pilar 2: orquestração inteligente (pt-BR)
-│   └── ...                  referências de playbooks, rotas, provedores e operações
+├── SKILL.md            ponto de entrada da skill (pt-BR)
+├── references/         guias carregados só quando a tarefa precisa: memória, orquestração,
+│                       playbooks, roteamento, provedores, controle remoto, operações...
 ├── scripts/
-│   ├── brain.py             memória: where, install, find, record
-│   ├── orchestrate.py       orquestração
-│   ├── hook.py, diagram.py
-├── playbooks.yaml, prices.json, schemas/, assets/
-└── licenses/                licenças MIT dos projetos de origem
+│   ├── brain.py        memória: where, install, find, record
+│   ├── orchestrate.py  orquestração e editor
+│   └── ...             hook, controle remoto, automações, memória de chats
+├── assets/             editor, painel do celular e aplicativo do Windows
+├── playbooks.yaml, prices.json, schemas/
+└── licenses/           avisos de licença de terceiros
 ```
 
 ```sh
 py scripts/brain.py where
-py scripts/brain.py install --dry-run
-py scripts/brain.py find mindloom exportacao --route 30-Projetos
+py scripts/brain.py find exportacao csv --route 30-Projetos
 py scripts/brain.py record --title "Auditoria final" --folder 30-Projetos --write
 ```
 
-## Estado da orquestração
+## Licença
 
-Política, playbooks, preços, cota e histórico ficam em `%USERPROFILE%\.coding-opus` (Windows; fora do AppData, que o app Claude para Windows virtualiza) ou `~/.config/coding-opus`. Se você usava a Alethe, a primeira execução copia `%APPDATA%\Alethe` para lá e renomeia os arquivos `alethe-*` para `coding-opus-*`, sem apagar a pasta antiga.
-
-## Créditos e licença
-
-Baseado em [Kc1t/alethe-orchestrate-skill](https://github.com/Kc1t/alethe-orchestrate-skill) (commit `ab81104`, MIT, © 2026 Kauã Miguel) e [n1systempc/obsidian-second-brain](https://github.com/n1systempc/obsidian-second-brain) (commit `4f43c49`, MIT, © 2026 Obsidian Second Brain contributors). As licenças originais estão em `skills/coding/licenses/`. O restante segue a licença [MIT](LICENSE).
+[MIT](LICENSE). Partes de código de terceiros, também sob MIT, mantêm os avisos de copyright
+originais em `skills/coding/licenses/`.
