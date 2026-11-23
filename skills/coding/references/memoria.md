@@ -15,7 +15,7 @@ Caminhos como `scripts/brain.py` são relativos à raiz da skill.
    redirecionada (OneDrive no Windows, `XDG_DOCUMENTS_DIR` no Linux, `~/Documents` no macOS).
    Uma pasta existente com outra caixa (`Second Brain`) é reaproveitada.
 
-## Configuração automática (e `install`)
+## Configuração automática
 
 Não há passo de instalação. Com o plugin, o hook `UserPromptSubmit` configura a Coding Opus no
 primeiro pedido depois de instalada: roda o equivalente a `brain.py install --no-desktop`, grava
@@ -25,8 +25,9 @@ linha. Sem o plugin, a skill faz o mesmo no primeiro uso (veja o SKILL.md). Se a
 `CODING_OPUS_AUTO_SETUP=0` desliga a configuração automática; o aplicativo continua sendo instalado
 na primeira abertura do editor.
 
-`install` continua aceito para refazer a configuração, inclusive "/coding install", "$coding install"
-ou "instale o second brain". Não use o projeto atual, a pasta da skill, a home nem um diretório
+Não há comando de instalação. Quando o usuário pedir para refazer a configuração, instalar o second
+brain ou registrar o MCP (por exemplo "refaça a configuração da Coding Opus"), siga os passos abaixo
+com o script `brain.py install`. Não use o projeto atual, a pasta da skill, a home nem um diretório
 temporário como local do second brain. Os passos abaixo valem para ele.
 
 1. Rode `brain.py where`.
@@ -69,8 +70,8 @@ formulário de nova nota e conclui o lembrete ao salvar. Você pode editar a dat
 lembrete manual ou reabrir um lembrete concluído.
 
 Numa pasta **nova**, criada sem perguntas pela configuração automática, ofereça uma vez **"Quais são
-as três áreas da sua vida com mais anotações, na ordem das pastas 10, 20 e 30?"**. Num `install`
-pedido, se a resposta vier antes da criação, use `install --areas A B C`. Se vier depois, renomeie as pastas 10, 20 e 30 mantendo o prefixo, só se estiverem vazias ou com o ok
+as três áreas da sua vida com mais anotações, na ordem das pastas 10, 20 e 30?"**. Numa configuração
+refeita a pedido, se a resposta vier antes da criação, use `install --areas A B C`. Se vier depois, renomeie as pastas 10, 20 e 30 mantendo o prefixo, só se estiverem vazias ou com o ok
 do usuário. Valide que destinos ficam dentro do second brain, sem links simbólicos nem colisões,
 atualize os links do `HOME.md` e rode `install` de novo para refazer as rotas. Numa pasta que já
 existia, não pergunte nem renomeie nada sem pedido.

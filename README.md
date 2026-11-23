@@ -58,7 +58,7 @@ Nada é escrito nos seus projetos.
 | --- | --- |
 | usar outro local para o second brain | defina `CODING_OPUS_BRAIN` antes do primeiro uso |
 | não configurar sozinha | defina `CODING_OPUS_AUTO_SETUP=0` |
-| refazer a configuração ou registrar o MCP `second-brain` (requer Node.js) | `/coding install` |
+| refazer a configuração ou registrar o MCP `second-brain` (requer Node.js) | peça em texto, por exemplo "refaça a configuração da Coding Opus" |
 
 ## Editor de Playbooks
 
@@ -88,7 +88,6 @@ própria do Chrome, Edge, Chromium ou Brave. Abas:
 | `/coding setup` | confere provedores e política e guia a configuração da orquestração |
 | `/coding doctor` | registra a cópia do runner e o Python da sessão |
 | `/coding guide [fase]` | lista ou imprime a referência de uma fase |
-| `/coding install` | refaz a configuração (ela já acontece sozinha no primeiro uso) |
 
 No Codex, use `$coding`. Como plugin, o Claude Code mostra a skill como `/coding:coding`. Os
 comandos curtos da orquestração (`status`, `usage`, `stop`, `save`, `max`, `passive`...) também

@@ -24,7 +24,7 @@ a autorização persistente da função memory, quando habilitada.
 
 Para consultar ou registrar, carregue [references/memoria.md](references/memoria.md).
 
-A configuração é automática, sem `/coding install`. Com o plugin, o hook a faz no primeiro pedido.
+A configuração é automática; não há comando de instalação. Com o plugin, o hook a faz no primeiro pedido.
 Sem o plugin, no primeiro uso da skill: se `coding-opus:inicio` não estiver nas instruções globais
 e `CODING_OPUS_AUTO_SETUP` não for `0`, rode `scripts/brain.py install --no-desktop` antes de seguir,
 sem perguntar, e diga em uma linha o caminho do second brain e os arquivos de regras tocados.
@@ -101,7 +101,7 @@ a referência numa cópia diferente.
 
 | Pedido                                                                            | Ação                                                                                        |
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `onde`, `consultar`, `registrar`, `install` (refaz a configuração)                | seguir o guia `memoria`; escrever só com autorização                                        |
+| `onde`, `consultar`, `registrar`, refazer a configuração                          | seguir o guia `memoria`; escrever só com autorização                                        |
 | `setup`, `doctor`                                                                 | diagnóstico e guia `onboarding` quando necessário                                           |
 | tarefa, revisão com retorno, “peça ao Codex/Claude…”                              | guia `orquestracao`; usar worker do CLI nomeado                                             |
 | “varre o projeto inteiro”, “traduza para todos os idiomas”, “porte com os testes” | considerar unidades dos playbooks; manter com o lead se não houver independência útil       |
