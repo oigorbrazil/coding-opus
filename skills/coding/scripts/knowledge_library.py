@@ -177,6 +177,27 @@ def note_index(root, group, query, page):
     }
 
 
+def memory_switch(memory, exists, on):
+    """Turn chat memory on or off from the editor, like `memory on|off`.
+
+    On: enable it and install the capture hooks and the rules in Claude Code and Codex.
+    Off: stop capturing; the history and the hooks stay, and the hooks skip a disabled memory.
+    """
+    if not isinstance(on, bool):
+        raise brain.BrainError("Informe se a memória fica ligada ou desligada.")
+    if on:
+        if not exists:
+            raise brain.BrainError("Pasta Second Brain ausente.")
+        from chat_memory_setup import install
+
+        memory.enable()
+        report = install(memory, hooks=True, rules=True)
+        return {"enabled": True, "hooks": report.get("hooks", []), "rules": report.get("rules", [])}
+    if memory.root.is_dir():
+        atomic_text(memory.root / "config.json", '{"enabled": false, "version": 1}\n')
+    return {"enabled": False}
+
+
 def conversation_index(memory, group, query, page):
     with memory.connect() as db:
         groups = db.execute("""SELECT scope AS id, min(project) AS project, count(*) AS count
@@ -311,6 +332,8 @@ class KnowledgeLibrary:
             if exists and enabled:
                 result = note_index(root, group, query, page) if kind == "notes" else conversation_index(memory, group, query, page)
             return {**result, "path": str(directory), "exists": exists, "enabled": enabled, "pageSize": PAGE_SIZE}
+        if kind == "memory" and action == "switch":
+            return memory_switch(memory, exists, request.get("enabled"))
         if action == "reveal":
             if redirected(directory):
                 raise brain.BrainError("A pasta usa um caminho redirecionado.")

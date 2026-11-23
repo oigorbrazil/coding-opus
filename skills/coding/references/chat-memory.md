@@ -16,7 +16,8 @@ python scripts/chat_memory.py status
 python scripts/chat_memory.py disable
 ```
 
-`--brain <pasta>` vem antes do subcomando. Por padrão usa o second brain global do `brain.py`,
+No editor, o interruptor **Memória ligada/desligada** da aba Memória faz o mesmo que `enable
+--install-hooks --install-rules` e `disable`. `--brain <pasta>` vem antes do subcomando. Por padrão usa o second brain global do `brain.py`,
 que deve existir. Cria somente memory e configurações específicas desta função. `disable`
 interrompe capturas e conserva o histórico. Consultas pela ferramenta exigem a função ativa.
 Não reative sem pedido. Para omitir um turno, o usuário pode iniciar o pedido com “não registre”.

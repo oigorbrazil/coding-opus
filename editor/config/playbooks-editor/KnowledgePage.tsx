@@ -101,6 +101,33 @@ export function KnowledgePage({
     setBusy(true)
     setRevision((current) => current + 1)
   }
+  const [switching, setSwitching] = useState(false)
+  const [switchNote, setSwitchNote] = useState('')
+  const memoryOn = Boolean(catalog?.enabled)
+  const switchMemory = async () => {
+    setSwitching(true)
+    setSwitchNote('')
+    try {
+      await libraryCall({ kind: 'memory', action: 'switch', enabled: !memoryOn })
+      setError('')
+      setSwitchNote(
+        memoryOn
+          ? t(
+              'Memória desligada: os novos chats não são mais registrados. O histórico continua aqui.',
+              'Memory off: new chats are no longer recorded. The history stays here.'
+            )
+          : t(
+              'Memória ligada: os novos chats do Claude Code e do Codex passam a ser registrados. No Codex, aprove os novos hooks em /hooks.',
+              'Memory on: new Claude Code and Codex chats are recorded from now on. In Codex, approve the new hooks in /hooks.'
+            )
+      )
+      refresh()
+    } catch (failure) {
+      setError(String(failure))
+    } finally {
+      setSwitching(false)
+    }
+  }
   const clearDetail = () => {
     setSelected(null)
     setDetail(null)
@@ -161,6 +188,27 @@ export function KnowledgePage({
           </div>
         </div>
         <div className={styles.actions}>
+          {!notes && catalog?.exists ? (
+            <label
+              className={styles.memorySwitch}
+              title={t(
+                'Registra os pedidos e respostas dos chats no Second Brain',
+                'Records chat requests and answers in the Second Brain'
+              )}
+            >
+              <span className={styles.automationSwitch}>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={memoryOn}
+                  disabled={switching || busy}
+                  onChange={() => void switchMemory()}
+                />
+                <span aria-hidden="true" />
+              </span>
+              {memoryOn ? t('Memória ligada', 'Memory on') : t('Memória desligada', 'Memory off')}
+            </label>
+          ) : null}
           {available ? (
             <button className={styles.button} type="button" onClick={reveal}>
               <FolderOpen size={15} /> {t('Abrir pasta', 'Open folder')}
@@ -188,11 +236,19 @@ export function KnowledgePage({
           {error}
         </p>
       ) : null}
-      {catalog && !available ? (
+      {switchNote ? (
+        <p className={styles.alert} role="status">
+          {switchNote}
+        </p>
+      ) : null}
+      {catalog && !available && !switchNote ? (
         <p className={styles.alert} role="status">
           {!catalog.exists
             ? t('Pasta Second Brain ausente.', 'Second Brain folder is missing.')
-            : t('Memória desativada ou indisponível.', 'Memory is disabled or unavailable.')}
+            : t(
+                'A memória de chats está desligada. Ligue no interruptor acima para registrar as conversas.',
+                'Chat memory is off. Turn it on with the switch above to record conversations.'
+              )}
         </p>
       ) : null}
       <div
