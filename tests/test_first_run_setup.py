@@ -81,5 +81,22 @@ class FirstRunSetupTest(unittest.TestCase):
         self.assertFalse(self.marker.exists())
 
 
+
+class Python39Test(unittest.TestCase):
+    def test_scripts_avoid_write_text_newline(self):
+        # Path.write_text(newline=...) only exists from Python 3.10; the skill supports 3.9.
+        import ast
+
+        found = []
+        for script in sorted(SCRIPTS.glob("*.py")):
+            tree = ast.parse(script.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in ("write_text", "read_text")
+                        and any(keyword.arg == "newline" for keyword in node.keywords)):
+                    found.append(f"{script.name}:{node.lineno}")
+        self.assertEqual(found, [])
+
+
 if __name__ == "__main__":
     unittest.main()

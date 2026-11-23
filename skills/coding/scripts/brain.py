@@ -74,6 +74,12 @@ def documents_dir() -> Path:
     return home / "Documents"
 
 
+def write_lf(path: Path, text: str) -> None:
+    """UTF-8 with LF line ends. Path.write_text(newline=...) needs Python 3.10; the skill supports 3.9."""
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+
+
 def brain_path(override: Optional[str] = None) -> Path:
     chosen = override or os.environ.get("CODING_OPUS_BRAIN")
     if chosen:
@@ -232,7 +238,7 @@ def write_block(path: Path, block: str, dry: bool) -> str:
             action = "bloco atualizado" if content != previous else "sem mudança"
     if not dry and content != previous:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8", newline="\n")
+        write_lf(path, content)
     return action
 
 
@@ -275,13 +281,12 @@ def install(args: argparse.Namespace) -> int:
             brain.mkdir(parents=True)
             for name in folders:
                 (brain / name).mkdir()
-            (brain / "HOME.md").write_text("\n".join(
+            write_lf(brain / "HOME.md", "\n".join(
                 ["# Índice do second brain", ""] +
-                [f"- [{n}](<./{n}/>) — {descriptions.get(n, '')}" for n in folders]) + "\n",
-                encoding="utf-8", newline="\n")
+                [f"- [{n}](<./{n}/>) — {descriptions.get(n, '')}" for n in folders]) + "\n")
             for file, kind, section in (("_nota.md", "nota", "Conteúdo"), ("_daily.md", "daily", "Registro do dia"),
                                         ("_decisao.md", "decisao", "Decisão")):
-                (brain / "99-Templates" / file).write_text(template(kind, section), encoding="utf-8", newline="\n")
+                write_lf(brain / "99-Templates" / file, template(kind, section))
             local = rules_block(".", folders, [], set())
             for name in ("CLAUDE.md", "AGENTS.md"):
                 write_block(brain / name, local, dry)
