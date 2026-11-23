@@ -24,8 +24,6 @@ internal static class CodingOpus
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            if (mode == "--prompt")
-                return OfferInstallation() ? 0 : 2;
             if (mode == "--check-runtime")
             {
                 CoreWebView2Environment.GetAvailableBrowserVersionString();
@@ -45,47 +43,6 @@ internal static class CodingOpus
             else
                 Console.Error.WriteLine(error.Message);
             return 1;
-        }
-    }
-
-    private static bool OfferInstallation()
-    {
-        using (var dialog = new Form())
-        using (var label = new Label())
-        using (var buttons = new FlowLayoutPanel())
-        using (var install = new Button())
-        using (var later = new Button())
-        {
-            dialog.Text = Product;
-            dialog.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-            dialog.Font = SystemFonts.MessageBoxFont;
-            dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
-            dialog.StartPosition = FormStartPosition.CenterScreen;
-            dialog.MaximizeBox = false;
-            dialog.MinimizeBox = false;
-            dialog.ClientSize = new Size(460, 146);
-            dialog.AutoScaleMode = AutoScaleMode.Font;
-            label.Text = "Instalar o aplicativo Coding Opus?\r\n\r\nAbra o editor de Playbooks pelo menu Iniciar, em uma janela própria.";
-            label.Dock = DockStyle.Fill;
-            label.Padding = new Padding(18, 18, 18, 0);
-            buttons.Dock = DockStyle.Bottom;
-            buttons.Height = 53;
-            buttons.Padding = new Padding(12, 7, 12, 0);
-            buttons.FlowDirection = FlowDirection.RightToLeft;
-            buttons.WrapContents = false;
-            install.Text = "Instalar";
-            install.DialogResult = DialogResult.Yes;
-            install.Size = new Size(94, 31);
-            later.Text = "Agora não";
-            later.DialogResult = DialogResult.No;
-            later.Size = install.Size;
-            buttons.Controls.Add(later);
-            buttons.Controls.Add(install);
-            dialog.Controls.Add(label);
-            dialog.Controls.Add(buttons);
-            dialog.AcceptButton = install;
-            dialog.CancelButton = later;
-            return dialog.ShowDialog() == DialogResult.Yes;
         }
     }
 
