@@ -12,6 +12,7 @@ from automations import AutomationError, Automations, next_occurrence, parse_cro
 from remote_jobs import RemoteError
 
 MONDAY_9 = dt.datetime(2026, 11, 23, 9, 0)  # a Monday
+BEFORE_FIRST_RUN = dt.datetime(2026, 11, 22, 12, 30)  # fixed clock: real time would make the 09:00 run "missed"
 
 
 class FakeJobs:
@@ -100,34 +101,34 @@ class AutomationTest(unittest.TestCase):
     def test_unavailable_and_failed_dispatches(self):
         item = self.make(mode="write")
         self.store.request_run(item["id"])
-        self.store.tick(FakeJobs())
+        self.store.tick(FakeJobs(), now=BEFORE_FIRST_RUN)
         self.assertEqual(self.store.runs(item["id"])[0]["status"], "skipped_unavailable")
         self.config["allow_write"] = True
         self.store.request_run(item["id"])
-        self.store.tick(FakeJobs(busy=True))
+        self.store.tick(FakeJobs(busy=True), now=BEFORE_FIRST_RUN)
         self.assertEqual(self.store.runs(item["id"])[0]["status"], "skipped_unavailable")
         self.config["projects"] = {}
         self.store.request_run(item["id"])
-        self.store.tick(FakeJobs())
+        self.store.tick(FakeJobs(), now=BEFORE_FIRST_RUN)
         self.assertIn("não está mais liberado", self.store.runs(item["id"])[0]["detail"])
 
     def test_reuse_session_falls_back_to_a_fresh_one(self):
         item = self.make(reuse_session=True)
         jobs = FakeJobs()
         self.store.request_run(item["id"])
-        self.store.tick(jobs)
+        self.store.tick(jobs, now=BEFORE_FIRST_RUN)
         self.store.request_run(item["id"])
-        self.store.tick(jobs)
+        self.store.tick(jobs, now=BEFORE_FIRST_RUN)
         self.assertEqual([call["session"] for call in jobs.calls], [None, "session-1"])
         jobs.stale.add("session-1")
         self.store.request_run(item["id"])
-        self.store.tick(jobs)
+        self.store.tick(jobs, now=BEFORE_FIRST_RUN)
         self.assertEqual(jobs.calls[-1]["session"], None)
 
     def test_remove_drops_history_and_list_shows_last_run(self):
         item = self.make()
         self.store.request_run(item["id"])
-        self.store.tick(FakeJobs())
+        self.store.tick(FakeJobs(), now=BEFORE_FIRST_RUN)
         listed = self.store.listed()
         self.assertEqual(listed[0]["last"]["status"], "dispatched")
         self.store.remove(item["id"])
