@@ -302,6 +302,8 @@ def install(args: argparse.Namespace) -> int:
             block = rules_block(brain.as_posix(), folders, extra, generated)
             rules[str(target)] = write_block(target, block, dry)
     report["globalRules"] = rules
+    if not dry:
+        write_setup_marker(brain)
     if not dry and not getattr(args, "no_desktop", False):
         from desktop_editor import DesktopError, ensure_installed
         try:
@@ -312,6 +314,42 @@ def install(args: argparse.Namespace) -> int:
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
+
+
+RULES_MARKER = "coding-opus:inicio"
+
+
+def write_setup_marker(brain: Path) -> None:
+    from hook import setup_marker_path
+
+    marker = Path(setup_marker_path())
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps({"version": 1, "secondBrain": str(brain),
+                                  "at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")},
+                                 ensure_ascii=False), encoding="utf-8")
+
+
+def automatic_setup() -> Optional[Dict[str, object]]:
+    """First-use setup, without asking: the same as `install --no-desktop`.
+
+    Returns the install report, or None when the global rules were already there (an install made
+    by hand before the marker existed), in which case only the marker is written.
+    """
+    try:
+        configured = RULES_MARKER in (Path.home() / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        configured = False
+    if configured:
+        write_setup_marker(brain_path())
+        return None
+    import contextlib
+    import io
+
+    args = argparse.Namespace(brain=None, areas=None, no_rules=False, no_desktop=True, dry_run=False)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        install(args)
+    return json.loads(out.getvalue())
 
 
 def where(args: argparse.Namespace) -> int:

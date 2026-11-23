@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+os.environ.setdefault("CODING_OPUS_AUTO_SETUP", "0")  # never set up the real home from a test
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "skills/coding/scripts/orchestrate.py"
 spec = importlib.util.spec_from_file_location("runtime_runner", SCRIPT)

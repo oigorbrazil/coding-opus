@@ -13,6 +13,7 @@ from unittest import mock
 # Tests read the generic playbooks, not the personal default the skill ships.
 os.environ.setdefault("CODING_OPUS_BUNDLED_PLAYBOOKS", str(Path(__file__).resolve().parent / "fixtures" / "playbooks.yaml"))
 os.environ.setdefault("CODING_OPUS_TERMINALS", "0")
+os.environ.setdefault("CODING_OPUS_AUTO_SETUP", "0")  # never set up the real home from a test
 
 SCRIPT = Path(__file__).resolve().parent.parent / "skills/coding/scripts/orchestrate.py"
 spec = importlib.util.spec_from_file_location("passive_runner", SCRIPT)

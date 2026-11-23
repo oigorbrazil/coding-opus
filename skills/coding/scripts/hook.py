@@ -34,6 +34,36 @@ def orchestrations_home() -> str:
     return os.path.join(base, "orchestrations")
 
 
+def setup_marker_path() -> str:
+    """Written once Coding Opus is set up (second brain and global rules), so later prompts skip the check."""
+    return os.path.join(os.path.dirname(orchestrations_home()), "setup.json")
+
+
+def first_run_setup(event: dict) -> str:
+    """Set Coding Opus up on the first prompt after the plugin is installed: no /coding install needed.
+
+    Creates or reuses the second brain and writes the coding-opus block of the global rules, like
+    `brain.py install --no-desktop` (the app installs itself the first time the editor opens).
+    CODING_OPUS_AUTO_SETUP=0 turns this off. Returns context for the model, or "".
+    """
+    if event.get("hook_event_name", "UserPromptSubmit") != "UserPromptSubmit":
+        return ""
+    if os.environ.get("CODING_OPUS_AUTO_SETUP") == "0" or os.path.exists(setup_marker_path()):
+        return ""
+    import brain
+
+    report = brain.automatic_setup()
+    if report is None:
+        return ""  # Set up by hand before the marker existed; now remembered.
+    state = "criado" if report.get("created") else "reaproveitado"
+    rules = ", ".join(report.get("globalRules") or {}) or "nenhum"
+    return (
+        "Coding Opus acabou de se configurar sozinho, no primeiro uso. "
+        f"Second brain {state} em {report['secondBrain']}. Regras globais gravadas em: {rules}. "
+        "Conte isso ao usuário em uma linha antes de responder, e siga com o pedido dele.\n"
+    )
+
+
 def read_state(path: str) -> dict:
     try:
         with open(path, encoding="utf-8") as handle:
@@ -114,9 +144,15 @@ def hook_output(stdin_text: str) -> str:
         return ""
     try:
         event = json.loads(stdin_text) if stdin_text.strip() else {}
-        if not isinstance(event, dict) or skip_hook(event, time.time()):
+        if not isinstance(event, dict):
             return ""
-        return full_hook_output(stdin_text)
+        try:
+            setup = first_run_setup(event)
+        except Exception:  # A failed setup is retried on the next prompt; it never blocks this one.
+            setup = ""
+        if skip_hook(event, time.time()):
+            return setup
+        return setup + full_hook_output(stdin_text)
     except Exception:  # A hook must never block or fail the prompt.
         return ""
 
@@ -127,7 +163,13 @@ def main() -> int:
     try:
         stream = getattr(sys.stdin, "buffer", None)
         text = stream.read().decode("utf-8", errors="replace") if stream is not None else sys.stdin.read()
-        print(hook_output(text), end="")
+        output = hook_output(text)
+        out = getattr(sys.stdout, "buffer", None)
+        if out is not None:  # UTF-8 whatever the console code page (cp1252 would garble accents)
+            out.write(output.encode("utf-8"))
+            out.flush()
+        else:
+            print(output, end="")
     except Exception:
         pass
     return 0
