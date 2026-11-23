@@ -17,6 +17,42 @@ import { UsageSimulation } from './UsageSimulation'
 import styles from './Playbooks.module.css'
 import { ProviderMark } from './ProviderMark'
 
+// The installed agent CLIs, read once per page: detection runs every CLI's --version.
+let installedCache: Promise<Set<string> | null> | null = null
+
+function readInstalled(): Promise<Set<string> | null> {
+  const api = window.api?.codingOpus
+  if (typeof api?.detectClis !== 'function') {
+    return Promise.resolve(null)
+  }
+  installedCache ??= api
+    .detectClis()
+    .then((result) =>
+      result.ok ? new Set(result.clis.filter((cli) => cli.installed).map((cli) => cli.id)) : null
+    )
+    .catch(() => null)
+  return installedCache
+}
+
+/** Providers to show in the usage bar: the configured ones that are installed on this computer.
+ * Until detection answers, or if it cannot, every configured provider is shown. */
+function useShownProviders(providers: string[]): string[] {
+  const [installed, setInstalled] = useState<Set<string> | null>(null)
+  useEffect(() => {
+    let live = true
+    void readInstalled().then((value) => {
+      if (live) {
+        setInstalled(value)
+      }
+    })
+    return () => {
+      live = false
+    }
+  }, [])
+  const shown = installed ? providers.filter((id) => installed.has(id)) : providers
+  return shown.length ? shown : providers
+}
+
 export function UsageBar({
   onChange,
   onRefresh,
@@ -27,6 +63,7 @@ export function UsageBar({
   load: 'loading' | 'ready' | 'error'
 }) {
   const { s, t, select } = usePlaybooks()
+  const shown = useShownProviders(s.providers)
   const [open, setOpen] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -94,7 +131,7 @@ export function UsageBar({
 
   const tone = (value: number) =>
     value >= q.criticalThreshold ? 'danger' : value >= q.criticalThreshold - 20 ? 'warn' : 'normal'
-  const current = open && s.providers.includes(open) ? open : null
+  const current = open && shown.includes(open) ? open : null
   const def = current ? s.catalog[current] : null
   const useRealUsage = () => {
     s.usageMode = 'live'
@@ -104,7 +141,7 @@ export function UsageBar({
 
   return (
     <div ref={rootRef} className={styles.usage}>
-      {s.providers.map((id) => {
+      {shown.map((id) => {
         const values = s.usageMode === 'simulation' ? s.usage[id] : actual[id]
         const main = windowsOf(s, id)
           .filter((w) => w.main)
@@ -182,7 +219,7 @@ export function UsageBar({
           <div className={styles.popoverTitle}>
             {t('playbooks.usageReal')}
             <span className={styles.tabs}>
-              {s.providers.map((id) => (
+              {shown.map((id) => (
                 <button
                   key={id}
                   type="button"
