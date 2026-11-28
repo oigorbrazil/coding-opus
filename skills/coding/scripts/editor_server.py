@@ -60,6 +60,7 @@ class EditorState:
         self.started = time.monotonic()
         self.lock = threading.Lock()
         self.remote_lock = threading.Lock()
+        self.picker_lock = threading.Lock()
         self.usage_refresh = UsageRefresh(policy_path)
         self.generator = PlaybookGenerator(policy_path, usage=self.usage_refresh)
         self.account_manager = AccountManager(policy_path)
@@ -129,6 +130,20 @@ class EditorState:
         except updates.UpdateError as error:
             return {"ok": False, "error": str(error)}
 
+    def pick_folder(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Open this computer's folder dialog (the page cannot read full paths itself)."""
+        import folder_picker
+
+        if not self.picker_lock.acquire(blocking=False):
+            return {"ok": False, "error": "A janela de pastas já está aberta."}
+        try:
+            initial = body.get("initial") if isinstance(body.get("initial"), str) else None
+            return {"ok": True, "path": folder_picker.pick_folder(initial)}
+        except folder_picker.PickerError as error:
+            return {"ok": False, "error": str(error)}
+        finally:
+            self.picker_lock.release()
+
     def apply_update(self) -> Dict[str, Any]:
         """Replace the installed skill's outdated files with GitHub's, each checked by hash first."""
         import updates
@@ -142,9 +157,11 @@ class EditorState:
         home = self.remote_home()
         try:
             status = remote_status(home)
-            items = Automations(home).listed() if status["configured"] else []
+            items = Automations(home).listed()  # their folders are their own; remote control only hosts the schedule
             return {"ok": True, "automations": items, "running": status["running"], "allowWrite": status["allow_write"],
-                    "projects": [project["key"] for project in status["projects"] if project["exists"]]}
+                    "configured": status["configured"],
+                    "projects": [project["key"] for project in status["projects"] if project["exists"]],
+                    "projectPaths": {project["key"]: project["path"] for project in status["projects"]}}
         except (OSError, ValueError, KeyError, RemoteError, AutomationError, sqlite3.Error) as error:
             return {"ok": False, "error": str(error)}
 
@@ -321,7 +338,7 @@ def make_handler(state: EditorState, port: int):
             path = self.path.split("?", 1)[0]
             if path not in ("/api/playbooks", "/api/accounts/order", "/api/playbooks/generate",
                             "/api/accounts/manage", "/api/workspace", "/api/library", "/api/remote/open",
-                            "/api/remote", "/api/automations", "/api/updates"):
+                            "/api/remote", "/api/automations", "/api/updates", "/api/pick-folder"):
                 self._json(404, {"error": "not found"})
                 return
             try:
@@ -348,6 +365,12 @@ def make_handler(state: EditorState, port: int):
                     self._json(415, {"ok": False, "error": "application/json required"})
                     return
                 self._json(200, state.automation_action(body))
+                return
+            if path == "/api/pick-folder":
+                if self.headers.get_content_type() != "application/json":
+                    self._json(415, {"ok": False, "error": "application/json required"})
+                    return
+                self._json(200, state.pick_folder(body))
                 return
             if path == "/api/updates":
                 if self.headers.get_content_type() != "application/json":

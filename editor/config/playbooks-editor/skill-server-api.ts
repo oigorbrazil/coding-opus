@@ -169,6 +169,8 @@ export type AutomationRun = {
   task_id: string | null
   detail: string | null
   result?: string | null
+  /** The project this run went to; null for runs from before multi-project automations. */
+  project?: string | null
 }
 
 export type Automation = {
@@ -177,6 +179,7 @@ export type Automation = {
   prompt: string
   agent: 'claude' | 'codex'
   project: string
+  projects: string[]
   mode: 'read-only' | 'write'
   model: string | null
   playbook: string | null
@@ -201,7 +204,7 @@ export type AutomationDraft = {
   name: string
   prompt: string
   agent: 'claude' | 'codex'
-  project: string
+  projects: string[]
   mode: 'read-only' | 'write'
   model: string
   isolate: boolean
@@ -222,6 +225,10 @@ export type AutomationsState = {
   running: boolean
   allowWrite: boolean
   projects: string[]
+  /** Folder of each allowed project, by key. */
+  projectPaths?: Record<string, string>
+  /** Whether remote control is set up: its service is what runs automations on schedule. */
+  configured?: boolean
 }
 
 type AutomationsResult = ({ ok: true } & AutomationsState) | { ok: false; error: string }
@@ -233,6 +240,13 @@ export const automationAction = (body: {
   id?: string
   data?: Partial<AutomationDraft>
 }) => call<AutomationsResult>('/api/automations', { method: 'POST', body: JSON.stringify(body) })
+
+/** Opens this computer's folder dialog; `path` is null when the person cancels. */
+export const pickFolder = (initial?: string) =>
+  call<{ ok: true; path: string | null } | { ok: false; error: string }>('/api/pick-folder', {
+    method: 'POST',
+    body: JSON.stringify({ initial: initial ?? null })
+  })
 
 export const automationRuns = (id: string) =>
   call<{ ok: true; runs: AutomationRun[] } | { ok: false; error: string }>('/api/automations', {

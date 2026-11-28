@@ -84,6 +84,49 @@ class RemoteTest(unittest.TestCase):
         with self.assertRaises(RemoteError):
             self.jobs.start("project", "claude", "No", "write", mode="write")
 
+    def settled_locally(self, task_id):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            self.jobs.refresh()
+            with self.jobs.db() as db:
+                state = db.execute("SELECT state FROM tasks WHERE id=?", (task_id,)).fetchone()[0]
+            if state not in ("starting", "running", "stopping"):
+                return state
+            time.sleep(.02)
+        self.fail("Fake task did not finish")
+
+    def test_local_folder_runs_outside_the_list_but_the_phone_cannot_reach_it(self):
+        folder = self.root / "automation-folder"
+        folder.mkdir()
+        task = self.jobs.start(str(folder), "claude", "Review", "local", mode="write", folder=str(folder))
+        plan = json.loads((self.jobs.task_folder(task["id"]) / "plan.json").read_text(encoding="utf-8"))
+        self.assertEqual(Path(plan["workers"][0]["cwd"]), folder.resolve())
+        self.assertEqual(self.settled_locally(task["id"]), "succeeded")  # the service still settles it
+        # The automation itself continues its session in that folder, and a retry returns the same task.
+        again = self.jobs.start(str(folder), "claude", "Next", "local-2", mode="write", session_id=task["session_id"],
+                                folder=str(folder))
+        self.assertEqual(again["session_id"], task["session_id"])
+        self.assertEqual(self.jobs.start(str(folder), "claude", "Next", "local-2", mode="write",
+                                         session_id=task["session_id"], folder=str(folder))["id"], again["id"])
+        other = self.root / "other-folder"
+        other.mkdir()
+        with self.assertRaisesRegex(RemoteError, "não encontrada"):  # never another folder's session
+            self.jobs.start(str(other), "claude", "No", "cross", mode="write", session_id=task["session_id"],
+                            folder=str(other))
+        self.assertEqual(self.settled_locally(again["id"]), "succeeded")
+        # The phone and the panel never see it, nor can they continue it.
+        self.assertEqual(self.jobs.list_sessions(), [])
+        with self.assertRaisesRegex(RemoteError, "não encontrada"):
+            self.jobs.get_task(task["id"])
+        with self.assertRaisesRegex(RemoteError, "não encontrada"):
+            self.jobs.send(task["session_id"], "Continue", "phone-followup")
+        with self.assertRaisesRegex(RemoteError, "não encontrada"):
+            self.jobs.continue_with(task["session_id"], "codex", "Finish", "phone-transfer")
+        with self.assertRaisesRegex(RemoteError, "não autorizado"):  # a path is never accepted as a project name
+            self.jobs.start(str(folder.resolve()), "claude", "No", "path-as-key")
+        with self.assertRaises(RemoteError):
+            self.jobs.start("x", "claude", "No", "missing", folder=str(self.root / "missing"))
+
     def test_busy_project_refuses_overlap_and_stop_interrupts(self):
         task = self.jobs.start("project", "codex", "wait for stop", "slow")
         with self.assertRaises(RemoteError):

@@ -154,13 +154,23 @@ class RemoteJobs:
             session['project_path'] = self.session_path(db, session)
             return [self.task_snapshot(dict(row), session) for row in reversed(rows)]
 
+    @staticmethod
+    def local_folder(folder):
+        """A folder chosen on this computer (automations), outside the remote-control project list."""
+        path = Path(str(folder or ""))
+        if not str(folder or "").strip() or not path.is_absolute() or not path.is_dir():
+            raise RemoteError("A pasta escolhida não existe mais. Escolha outra na automação.")
+        return path.resolve()
+
     def start(self, project, agent, prompt, request_id, mode='read-only', model=None, session_id=None, *,
-              playbook=None, isolate=False, account=None, _inherit=None):
+              playbook=None, isolate=False, account=None, _inherit=None, folder=None):
+        """`folder` is only for local callers (automations): the panel and the phone always pass a project key,
+        and their later actions on that session still go through the project list, so they cannot reach it."""
         if agent not in ("claude", "codex"):
             raise RemoteError("Escolha claude ou codex")
         if mode not in ("read-only", "write"):
             raise RemoteError("Modo inválido")
-        if mode == "write" and not self.config.get("allow_write", False):
+        if mode == "write" and folder is None and not self.config.get("allow_write", False):
             raise RemoteError("Alterações estão desativadas neste servidor. Habilite-as no computador.")
         if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 50000:
             raise RemoteError("O pedido deve conter entre 1 e 50000 caracteres")
@@ -172,7 +182,11 @@ class RemoteJobs:
             raise RemoteError('O isolamento em worktree requer modo de edição.')
         if playbook is not None and (not isinstance(playbook, str) or not playbook or len(playbook) > 128):
             raise RemoteError('Playbook inválido.')
-        path = self.project_path(project)
+        if folder is not None:
+            path = self.local_folder(folder)
+            project = str(path)  # a path is never a project key, so the project list never resolves it
+        else:
+            path = self.project_path(project)
         try:
             book = execution.resolve_book(self.policy_path, playbook, mode) if playbook else None
             if account is not None:
@@ -195,7 +209,7 @@ class RemoteJobs:
                 db.execute("BEGIN IMMEDIATE")
                 existing = db.execute("SELECT * FROM tasks WHERE request_id=?", (request_id,)).fetchone()
                 if existing:
-                    owner = self.load_session(db, existing['session_id'])
+                    owner = self.own_session(db, existing['session_id'], project, folder is not None)
                     known_options = decode_options(dict(existing))
                     if ((session_id and owner['id'] != session_id) or existing['prompt'] != prompt
                             or owner['project'] != project or owner['agent'] != agent or owner['mode'] != mode
@@ -208,7 +222,7 @@ class RemoteJobs:
                       AND t.state IN ('starting','running','stopping','needs_input')""", (str(path), project)).fetchone():
                     raise RemoteError("Este projeto tem uma tarefa em andamento. Aguarde ou interrompa antes de enviar outra.")
                 if session_id:
-                    session = self.load_session(db, session_id)
+                    session = self.own_session(db, session_id, project, folder is not None)
                     if any(session[key] != value for key, value in
                            (("project", project), ("agent", agent), ("mode", mode), ("model", model))):
                         raise RemoteError("Sessão incompatível com projeto, agente, modelo ou modo")
@@ -273,7 +287,16 @@ class RemoteJobs:
                 with self.db() as db:
                     db.execute("UPDATE tasks SET state='failed',error=?,failure_kind='launch_error',updated=? WHERE id=?",
                                (str(error)[:1500], now(), task_id))
-            return self.get_task(task_id)
+            return self.get_task(task_id, local=folder is not None)
+
+    def own_session(self, db, session_id, project, local):
+        """A local caller reaches only sessions of the same local folder; everyone else goes through the list."""
+        if not local:
+            return self.load_session(db, session_id)
+        row = db.execute('SELECT * FROM sessions WHERE id=?', (session_id,)).fetchone()
+        if not row or row['project'] != project:
+            raise RemoteError('Sessão não encontrada')
+        return dict(row)
 
     def workspace_path(self, project, session):
         worktree = session.get('worktree')
@@ -454,11 +477,19 @@ class RemoteJobs:
             task['output_tail'] = log
         return task
 
-    def get_task(self, task_id):
+    def get_task(self, task_id, local=False):
+        """`local` is for the caller that started it with a local folder; the panel never passes it."""
         self.task_folder(task_id)
         self.refresh()
         with self.db() as db:
-            task, session = self.load_task(db, task_id)
+            if local:
+                row = db.execute('SELECT * FROM tasks WHERE id=?', (task_id,)).fetchone()
+                if not row:
+                    raise RemoteError('Tarefa não encontrada')
+                task = dict(row)
+                session = dict(db.execute('SELECT * FROM sessions WHERE id=?', (task['session_id'],)).fetchone())
+            else:
+                task, session = self.load_task(db, task_id)
             task = self.task_snapshot(task, session)
             task['project_path'] = task['project_path'] or self.session_path(db, session)
             return task

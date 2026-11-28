@@ -114,33 +114,42 @@ Não interprete status succeeded como prova de testes ou de conclusão de todos 
 ## Automações
 
 Modeladas nas automações do Orca. Uma automação roda um pedido com um agente (`claude` ou
-`codex`) num projeto liberado, no horário: `hourly`, `daily`, `weekdays`, `weekly` ou cron de
-5 campos (hora local). O serviço do controle remoto é o anfitrião: confere a agenda a cada 15 s
-enquanto está ligado e inicia cada execução pelo mesmo executor das tarefas do painel, então elas
-aparecem também no celular. Dados em `automations.sqlite3`, ao lado do config.json.
+`codex`) em uma ou mais pastas, no horário: `hourly`, `daily`, `weekdays`, `weekly` ou cron de
+5 campos (hora local). As pastas são da automação, independentes dos projetos liberados no
+controle remoto: no editor, **Escolher pasta** abre a janela de pastas do sistema (Explorer,
+Finder, zenity ou kdialog; se não abrir, cola-se o caminho). O serviço do controle remoto é só o
+anfitrião: confere a agenda a cada 15 s enquanto está ligado e inicia cada execução pelo mesmo
+executor das tarefas do painel. Dados em `automations.sqlite3`, ao lado do config.json.
 
-- **Pré-checagem:** comando de uma linha rodado na pasta do projeto antes das execuções
-  agendadas. Código 0 segue; outro código, erro ou tempo esgotado (padrão 60 s, até 600) registra
-  `skipped_precheck`. **Rodar agora** ignora a pré-checagem.
+- **Pastas fora da lista do controle remoto:** a tarefa roda, mas o celular e o painel não a veem
+  nem a continuam; o resultado aparece no histórico da automação. O modo de escrita é o da
+  automação, não o interruptor de escrita do controle remoto. Automações antigas, salvas pelo nome
+  do projeto, continuam funcionando e passam a guardar o caminho na próxima edição.
+- **Pré-checagem:** comando de uma linha rodado na pasta antes das execuções agendadas. Código 0
+  segue; outro código, erro ou tempo esgotado (padrão 60 s, até 600) registra `skipped_precheck`.
+  **Rodar agora** ignora a pré-checagem.
 - **Execução perdida:** se o serviço estava desligado no horário, roda uma vez ao voltar dentro
   da tolerância (padrão 60 min, até 1440); fora dela registra `skipped_missed`.
-- **Indisponível:** projeto removido, pasta inexistente, escrita desligada ou outra tarefa em
-  andamento no projeto registram `skipped_unavailable`; erro ao iniciar registra `dispatch_failed`.
+- **Indisponível:** pasta inexistente ou outra tarefa em andamento na pasta registram
+  `skipped_unavailable`; erro ao iniciar registra `dispatch_failed`.
+- **Várias pastas:** cada horário inicia uma tarefa por pasta, com uma linha própria no
+  histórico; uma pasta ocupada ou indisponível pula só ela.
 - **Opções:** modo só leitura ou escrita, modelo, playbook, worktree nova por execução (só
-  escrita) ou continuar a sessão da execução anterior (cai para sessão nova se ela sumiu).
+  escrita) ou continuar a sessão da execução anterior (só com uma pasta; cai para sessão nova se
+  ela sumiu).
 - **Histórico:** `queued`, `dispatching`, depois o estado da tarefa (`running`, `needs_input`,
   `completed`, `failed`, `stopped`) ou o motivo do pulo. Guarda as 200 últimas por automação;
   excluir a automação apaga o histórico.
 
 ```text
-python scripts/automations.py create --name "Revisão" --prompt "Revise as mudanças"   --agent codex --project meu-app --trigger weekdays --time 09:00
+python scripts/automations.py create --name "Revisão" --prompt "Revise as mudanças" --agent codex --project C:/projetos/app --project C:/projetos/site --trigger weekdays --time 09:00
 python scripts/automations.py list
 python scripts/automations.py run <id>        # na fila; o serviço inicia em até 15 s
 python scripts/automations.py runs --id <id>
 ```
 
-O celular não cria nem altera automações: só vê as tarefas que elas iniciam. Crie, altere ou
-rode automações apenas a pedido do usuário.
+O celular não cria nem altera automações. Crie, altere ou rode automações apenas a pedido do
+usuário.
 
 ## Operação e limites
 

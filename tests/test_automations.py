@@ -20,13 +20,13 @@ class FakeJobs:
         self.calls, self.busy, self.stale = [], busy, set(stale_sessions)
 
     def start(self, project, agent, prompt, request_id, mode="read-only", model=None, session_id=None, *,
-              playbook=None, isolate=False):
+              playbook=None, isolate=False, folder=None):
         if self.busy:
             raise RemoteError("Este projeto tem uma tarefa em andamento. Aguarde ou interrompa antes de enviar outra.")
         if session_id in self.stale:
             raise RemoteError("O agente não deixou uma sessão nativa.")
         self.calls.append({"project": project, "agent": agent, "request": request_id, "mode": mode,
-                           "session": session_id, "isolate": isolate})
+                           "session": session_id, "isolate": isolate, "folder": folder})
         return {"id": f"task-{len(self.calls)}", "session_id": session_id or f"session-{len(self.calls)}"}
 
 
@@ -52,12 +52,15 @@ class AutomationTest(unittest.TestCase):
         root = Path(temp.name)
         self.project = root / "app"
         self.project.mkdir()
+        self.app = str(self.project.resolve())
+        # Only older automations, saved by remote-control project name, read this config.
         self.config = {"projects": {"app": str(self.project)}, "allow_write": False}
         self.store = Automations(root / "remote", lambda: self.config)
 
     def make(self, **extra):
-        data = {"name": "Revisão", "prompt": "Revise as mudanças", "agent": "codex", "project": "app",
-                "preset": "daily", "hour": 9, "minute": 0, **extra}
+        target = {} if "project" in extra or "projects" in extra else {"projects": [self.app]}
+        data = {"name": "Revisão", "prompt": "Revise as mudanças", "agent": "codex",
+                "preset": "daily", "hour": 9, "minute": 0, **target, **extra}
         return self.store.create(data, now=dt.datetime(2026, 11, 22, 12, 0))
 
     def test_create_validates_and_plans_the_next_run(self):
@@ -99,18 +102,20 @@ class AutomationTest(unittest.TestCase):
         self.assertEqual(self.store.runs(item["id"])[0]["trigger"], "manual")
 
     def test_unavailable_and_failed_dispatches(self):
+        # The automation's own mode decides: writing does not depend on the remote-control switch.
         item = self.make(mode="write")
+        jobs = FakeJobs()
         self.store.request_run(item["id"])
-        self.store.tick(FakeJobs(), now=BEFORE_FIRST_RUN)
-        self.assertEqual(self.store.runs(item["id"])[0]["status"], "skipped_unavailable")
-        self.config["allow_write"] = True
+        self.store.tick(jobs, now=BEFORE_FIRST_RUN)
+        self.assertEqual(self.store.runs(item["id"])[0]["status"], "dispatched")
+        self.assertEqual((jobs.calls[0]["folder"], jobs.calls[0]["mode"]), (self.app, "write"))
         self.store.request_run(item["id"])
         self.store.tick(FakeJobs(busy=True), now=BEFORE_FIRST_RUN)
         self.assertEqual(self.store.runs(item["id"])[0]["status"], "skipped_unavailable")
-        self.config["projects"] = {}
+        self.project.rmdir()
         self.store.request_run(item["id"])
         self.store.tick(FakeJobs(), now=BEFORE_FIRST_RUN)
-        self.assertIn("não está mais liberado", self.store.runs(item["id"])[0]["detail"])
+        self.assertIn("não existe mais", self.store.runs(item["id"])[0]["detail"])
 
     def test_reuse_session_falls_back_to_a_fresh_one(self):
         item = self.make(reuse_session=True)
@@ -124,6 +129,70 @@ class AutomationTest(unittest.TestCase):
         self.store.request_run(item["id"])
         self.store.tick(jobs, now=BEFORE_FIRST_RUN)
         self.assertEqual(jobs.calls[-1]["session"], None)
+
+    def site(self):
+        other = self.project.parent / "site"
+        other.mkdir()
+        return str(other.resolve())
+
+    def test_one_automation_runs_once_in_each_folder(self):
+        site = self.site()  # not allowed in remote control: automations pick their own folders
+        item = self.make(projects=[self.app, site, self.app])
+        self.assertEqual((item["projects"], item["project"]), ([self.app, site], self.app))
+        jobs = FakeJobs()
+        self.store.tick(jobs, now=dt.datetime(2026, 11, 23, 9, 0, 10))
+        self.assertEqual([call["folder"] for call in jobs.calls], [self.app, site])
+        runs = self.store.runs(item["id"])
+        self.assertEqual(sorted((run["project"], run["status"]) for run in runs),
+                         sorted([(self.app, "dispatched"), (site, "dispatched")]))
+        self.store.request_run(item["id"])
+        self.store.tick(jobs, now=BEFORE_FIRST_RUN)
+        self.assertEqual([call["folder"] for call in jobs.calls[2:]], [self.app, site])
+        self.store.tick(jobs, now=dt.datetime(2026, 11, 25, 12, 0))  # service was off: one "missed" per folder
+        self.assertEqual(sorted(run["project"] for run in self.store.runs(item["id"]) if run["status"] == "skipped_missed"),
+                         sorted([self.app, site]))
+
+    def test_a_busy_or_removed_folder_only_skips_itself(self):
+        site = self.site()
+        item = self.make(projects=[self.app, site])
+        app = self.app
+
+        class BusyApp(FakeJobs):
+            def start(self, project, *args, **kwargs):
+                if kwargs.get("folder") == app:
+                    raise RemoteError("Este projeto tem uma tarefa em andamento. Aguarde ou interrompa antes de enviar outra.")
+                return super().start(project, *args, **kwargs)
+
+        self.store.request_run(item["id"])
+        self.store.tick(BusyApp(), now=BEFORE_FIRST_RUN)
+        self.assertEqual({run["project"]: run["status"] for run in self.store.runs(item["id"])},
+                         {self.app: "skipped_unavailable", site: "dispatched"})
+        self.store.request_run(item["id"])
+        self.store.edit(item["id"], {"projects": [site]}, now=BEFORE_FIRST_RUN)  # app dropped while queued
+        self.store.tick(FakeJobs(), now=BEFORE_FIRST_RUN)
+        self.assertEqual([run["project"] for run in self.store.runs(item["id"])][:1], [site])
+        self.assertEqual(len(self.store.runs(item["id"])), 3)
+
+    def test_folders_are_validated_and_old_project_names_still_work(self):
+        missing = str(self.project.parent / "nope")
+        for bad in ({"projects": []}, {"projects": [self.app, missing]}, {"projects": self.app},
+                    {"projects": ["relative/folder"]}, {"projects": [self.app] * 21}):
+            with self.assertRaises(AutomationError):
+                self.make(**bad)
+        with self.assertRaisesRegex(AutomationError, "um projeto"):
+            self.make(projects=[self.app, self.site()], reuse_session=True)
+        item = self.make(project="app")  # a remote-control name, as older versions saved it
+        self.assertEqual(item["projects"], [self.app])
+        with self.store.db() as db:  # a row written before the projects column, still by name
+            db.execute("UPDATE automations SET projects=NULL, project='app' WHERE id=?", (item["id"],))
+        self.assertEqual(self.store.show(item["id"])["projects"], ["app"])
+        jobs = FakeJobs()
+        self.store.request_run(item["id"])
+        self.store.tick(jobs, now=BEFORE_FIRST_RUN)
+        self.assertEqual(jobs.calls[0]["folder"], self.app)
+        self.assertEqual(self.store.edit(item["id"], {"name": "Outra"})["projects"], [self.app])
+        self.config.clear()  # remote control not set up at all: folders still work
+        self.assertEqual(self.make(projects=[self.app])["projects"], [self.app])
 
     def test_remove_drops_history_and_list_shows_last_run(self):
         item = self.make()

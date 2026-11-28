@@ -1,9 +1,10 @@
-import { ChevronDown, Pencil, Play, Plus, Power, Trash2, Zap } from 'lucide-react'
+import { ChevronDown, Folder, FolderPlus, Pencil, Play, Plus, Power, Trash2, X, Zap } from 'lucide-react'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { localize as t } from './knowledge-model'
 import {
   automationAction,
   automationRuns,
+  pickFolder,
   readAutomations,
   remoteAction,
   type Automation,
@@ -90,12 +91,12 @@ const TEMPLATES: Template[] = [
   }
 ]
 
-function blank(projects: string[]): AutomationDraft {
+function blank(): AutomationDraft {
   return {
     name: '',
     prompt: '',
     agent: 'claude',
-    project: projects[0] ?? '',
+    projects: [],
     mode: 'read-only',
     model: '',
     isolate: false,
@@ -117,7 +118,7 @@ function fromAutomation(item: Automation): AutomationDraft {
     name: item.name,
     prompt: item.prompt,
     agent: item.agent,
-    project: item.project,
+    projects: item.projects?.length ? item.projects : [item.project],
     mode: item.mode,
     model: item.model ?? '',
     isolate: item.isolate,
@@ -236,6 +237,11 @@ function RunHistory({ id }: { id: string }) {
           <div>
             <Status run={run} />
             <small className={styles.muted}>
+              {run.project ? (
+                <>
+                  <strong title={run.project}>{folderName(run.project)}</strong> ·{' '}
+                </>
+              ) : null}
               {ago(run.created)} · {run.trigger === 'manual' ? t('você pediu', 'you asked') : t('no horário', 'on schedule')}
             </small>
           </div>
@@ -272,6 +278,132 @@ function Choice<T extends string | number>({
           {option.label}
         </label>
       ))}
+    </div>
+  )
+}
+
+/** "app", "app e site", "app, site e api". */
+function listed(names: string[]): string {
+  if (names.length <= 1) {
+    return names[0] ?? '…'
+  }
+  return `${names.slice(0, -1).join(', ')} ${t('e', 'and')} ${names[names.length - 1]}`
+}
+
+/** The folder's own name: "site" for C:\…\projetos\site. Older automations saved a project name instead. */
+function folderName(entry: string): string {
+  const parts = entry.split(/[\\/]+/).filter(Boolean)
+  return parts[parts.length - 1] ?? entry
+}
+
+/** The automation's folders: chosen in the system's folder dialog, independent of remote control. */
+function FolderField({
+  folders,
+  paths,
+  onChange
+}: {
+  folders: string[]
+  paths?: Record<string, string>
+  onChange: (folders: string[]) => void
+}) {
+  const [working, setWorking] = useState(false)
+  const [problem, setProblem] = useState('')
+  const [typed, setTyped] = useState<string | null>(null)
+
+  const add = (folder: string) => {
+    setProblem('')
+    if (!folders.includes(folder)) {
+      onChange([...folders, folder])
+    }
+  }
+
+  const choose = async () => {
+    setWorking(true)
+    setProblem('')
+    try {
+      const result = await pickFolder(folders[folders.length - 1])
+      if (!result.ok) {
+        setProblem(result.error)
+        setTyped('') // the dialog could not open here: let the path be pasted instead
+      } else if (result.path) {
+        add(result.path)
+      }
+    } catch (reason) {
+      setProblem(String(reason))
+      setTyped('')
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  return (
+    <div className={styles.automationProjects}>
+      <span>
+        {t('Pastas', 'Folders')}{' '}
+        <small className={styles.muted}>
+          {t('uma ou mais; cada uma recebe a sua tarefa', 'one or more; each gets its own task')}
+        </small>
+      </span>
+      {folders.length ? (
+        <ul className={styles.automationFolders}>
+          {folders.map((folder) => (
+            <li key={folder} title={paths?.[folder] ?? folder}>
+              <Folder size={14} aria-hidden="true" />
+              <span>{folderName(folder)}</span>
+              <button
+                type="button"
+                className={styles.iconButton}
+                aria-label={t(`Remover ${folderName(folder)}`, `Remove ${folderName(folder)}`)}
+                title={t('Remover', 'Remove')}
+                onClick={() => onChange(folders.filter((entry) => entry !== folder))}
+              >
+                <X size={13} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <button type="button" className={styles.button} disabled={working} onClick={() => void choose()}>
+        <FolderPlus size={15} />{' '}
+        {working ? t('Escolha a pasta na janela aberta…', 'Pick the folder in the open window…') : t('Escolher pasta', 'Choose folder')}
+      </button>
+      {problem ? <p className={styles.error}>{problem}</p> : null}
+      {typed !== null ? (
+        <div className={styles.automationAllow}>
+          <label>
+            {t('Caminho completo da pasta', 'Full folder path')}
+            <input
+              autoFocus
+              value={typed}
+              placeholder={t('Ex.: C:\\Users\\voce\\projetos\\site', 'E.g. /Users/you/projects/site')}
+              onChange={(event) => setTyped(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && typed.trim()) {
+                  event.preventDefault()
+                  add(typed.trim())
+                  setTyped(null)
+                }
+              }}
+            />
+          </label>
+          <div className={styles.actions}>
+            <button
+              type="button"
+              className={styles.primary}
+              disabled={!typed.trim()}
+              onClick={() => {
+                add(typed.trim())
+                setTyped(null)
+              }}
+            >
+              {t('Adicionar', 'Add')}
+            </button>
+            <button type="button" className={styles.button} onClick={() => setTyped(null)}>
+              {t('Cancelar', 'Cancel')}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -361,7 +493,7 @@ export function AutomationsPage({ onLoadSettled }: { onLoadSettled?: () => void 
     }
     setEditing(null)
     setMessage('')
-    setDraft({ ...blank(state.projects), ...template?.draft })
+    setDraft({ ...blank(), ...template?.draft })
   }
 
   const close = () => {
@@ -391,7 +523,7 @@ export function AutomationsPage({ onLoadSettled }: { onLoadSettled?: () => void 
           <button
             className={styles.primary}
             type="button"
-            disabled={!state?.projects.length || busy}
+            disabled={!state || busy}
             onClick={() => start()}
           >
             <Plus size={15} /> {t('Nova automação', 'New automation')}
@@ -410,17 +542,17 @@ export function AutomationsPage({ onLoadSettled }: { onLoadSettled?: () => void 
           </p>
         ) : null}
         {!state && !error ? <p className={styles.muted}>{t('Carregando…', 'Loading…')}</p> : null}
-        {state && !state.projects.length ? (
-          <div className={styles.remoteWarning}>
+        {state && state.configured === false ? (
+          <div className={styles.remoteWarning} role="status">
             <p>
               {t(
-                'Primeiro, libere a pasta de um projeto na aba Controle remoto. As automações só rodam nos projetos liberados lá.',
-                'First, allow a project folder in the Remote control tab. Automations only run in the projects allowed there.'
+                'As automações rodam no horário pelo serviço do controle remoto, que ainda não foi configurado. Configure na aba Controle remoto; as pastas das automações continuam sendo só delas.',
+                'Automations run on schedule through the remote-control service, which is not set up yet. Set it up in the Remote control tab; automation folders stay their own.'
               )}
             </p>
           </div>
         ) : null}
-        {state && state.projects.length && !state.running ? (
+        {state && state.configured && !state.running ? (
           <div className={styles.remoteWarning} role="status">
             <p>
               {t(
@@ -485,17 +617,14 @@ export function AutomationsPage({ onLoadSettled }: { onLoadSettled?: () => void 
                     <option value="codex">Codex</option>
                   </select>
                 </label>
-                <label>
-                  {t('Projeto', 'Project')}
-                  <select value={draft.project} onChange={(event) => set({ project: event.target.value })}>
-                    {state.projects.map((project) => (
-                      <option key={project} value={project}>
-                        {project}
-                      </option>
-                    ))}
-                  </select>
-                </label>
               </div>
+              <FolderField
+                folders={draft.projects}
+                paths={state.projectPaths}
+                onChange={(projects) =>
+                  set({ projects, ...(projects.length > 1 ? { reuse_session: false } : {}) })
+                }
+              />
             </fieldset>
 
             <fieldset className={styles.automationStep}>
@@ -630,14 +759,17 @@ export function AutomationsPage({ onLoadSettled }: { onLoadSettled?: () => void 
               <label className={styles.remoteCheck}>
                 <input
                   type="checkbox"
-                  checked={draft.reuse_session}
-                  disabled={draft.mode === 'write' && draft.isolate}
+                  checked={draft.reuse_session && draft.projects.length <= 1}
+                  disabled={(draft.mode === 'write' && draft.isolate) || draft.projects.length > 1}
                   onChange={(event) => set({ reuse_session: event.target.checked })}
                 />
                 {t(
                   'Continuar a conversa da vez anterior, em vez de começar do zero',
                   'Continue the previous conversation instead of starting fresh'
                 )}
+                {draft.projects.length > 1 ? (
+                  <small className={styles.muted}>{t(' (só com um projeto)', ' (one project only)')}</small>
+                ) : null}
               </label>
             </details>
 
@@ -645,8 +777,8 @@ export function AutomationsPage({ onLoadSettled }: { onLoadSettled?: () => void 
               <p>
                 <strong>{scheduleSentence(draft)}</strong>
                 {t(
-                  `, o ${agentName(draft.agent)} vai ${draft.mode === 'write' ? 'trabalhar' : 'ler e responder, sem alterar arquivos,'} em ${draft.project || '…'}.`,
-                  `, ${agentName(draft.agent)} will ${draft.mode === 'write' ? 'work' : 'read and answer, without changing files,'} in ${draft.project || '…'}.`
+                  `, o ${agentName(draft.agent)} vai ${draft.mode === 'write' ? 'trabalhar' : 'ler e responder, sem alterar arquivos,'} em ${listed(draft.projects.map(folderName))}${draft.projects.length > 1 ? ', uma tarefa em cada' : ''}.`,
+                  `, ${agentName(draft.agent)} will ${draft.mode === 'write' ? 'work' : 'read and answer, without changing files,'} in ${listed(draft.projects.map(folderName))}${draft.projects.length > 1 ? ', one task each' : ''}.`
                 )}
               </p>
               <label className={styles.remoteCheck}>
@@ -698,7 +830,7 @@ export function AutomationsPage({ onLoadSettled }: { onLoadSettled?: () => void 
                         weekday: item.weekday ?? 1,
                         cron: item.cron
                       })}{' '}
-                      · {agentName(item.agent)} · {item.project}
+                      · {agentName(item.agent)} · {listed((item.projects?.length ? item.projects : [item.project]).map(folderName))}
                       {item.mode === 'write' ? ` · ${t('altera arquivos', 'changes files')}` : ''}
                     </span>
                     <span className={styles.automationMeta}>
@@ -785,7 +917,7 @@ export function AutomationsPage({ onLoadSettled }: { onLoadSettled?: () => void 
           </ul>
         ) : null}
 
-        {state && !draft && !state.automations.length && state.projects.length ? (
+        {state && !draft && !state.automations.length ? (
           <section className={styles.automationEmpty} aria-labelledby="automationsEmpty">
             <h2 id="automationsEmpty">{t('Deixe um agente cuidar das tarefas repetidas', 'Let an agent handle repeated tasks')}</h2>
             <p className={styles.muted}>

@@ -1,6 +1,7 @@
 """Scheduled agent tasks for Coding Opus, modeled on Orca automations.
 
-An automation runs a prompt with an agent in an allowed remote-control project on a schedule
+An automation runs a prompt with an agent in one or more allowed remote-control projects (one task
+per project, each with its own history entry) on a schedule
 (hourly, daily, weekdays, weekly or a 5-field cron). The remote-control service is the host: it
 checks the schedule while it runs and dispatches each run through RemoteJobs, so runs show up as
 tasks in the panel too. A precheck command gates scheduled runs only; "run now" bypasses it.
@@ -30,6 +31,7 @@ DEFAULT_GRACE_MINUTES = 60
 DEFAULT_PRECHECK_SECONDS = 60
 MAX_PRECHECK_SECONDS = 600
 RUNS_KEPT = 200
+MAX_PROJECTS = 20
 FIELDS = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))
 WEEKDAYS_PT = ("domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado")
 
@@ -146,7 +148,7 @@ def describe(item):
 
 COLUMNS = ("id", "name", "prompt", "agent", "project", "mode", "model", "playbook", "isolate", "preset", "cron",
            "enabled", "precheck", "precheck_timeout", "grace_minutes", "reuse_session", "next_run", "last_run",
-           "last_session", "created", "updated")
+           "last_session", "created", "updated", "projects")
 BOOLEAN = ("isolate", "enabled", "reuse_session")
 
 
@@ -174,6 +176,11 @@ class Automations:
                 );
                 CREATE INDEX IF NOT EXISTS runs_by_automation ON runs(automation_id, created);
             """)
+            # Added with multi-project automations; `project` stays the first one for older readers.
+            if "projects" not in {row[1] for row in db.execute("PRAGMA table_info(automations)")}:
+                db.execute("ALTER TABLE automations ADD COLUMN projects TEXT")
+            if "project" not in {row[1] for row in db.execute("PRAGMA table_info(runs)")}:
+                db.execute("ALTER TABLE runs ADD COLUMN project TEXT")
 
     @contextmanager
     def db(self):
@@ -187,6 +194,11 @@ class Automations:
         item = dict(raw)
         for key in BOOLEAN:
             item[key] = bool(item[key])
+        try:
+            projects = json.loads(item.get("projects") or "null")
+        except ValueError:
+            projects = None
+        item["projects"] = projects if isinstance(projects, list) and projects else [item["project"]]
         item["schedule"] = describe(item)
         if item["preset"] != "cron":  # the form fields behind a preset, so an edit keeps them
             parts = item["cron"].split()
@@ -195,10 +207,29 @@ class Automations:
         return item
 
     def config(self):
+        """The remote-control config, only to resolve project names saved by older versions."""
         try:
             return self.read_config()
-        except (OSError, ValueError) as error:
-            raise AutomationError("Configure o controle remoto e libere um projeto antes de criar automações.") from error
+        except (OSError, ValueError):
+            return {}
+
+    @staticmethod
+    def folder_of(entry, config):
+        """A saved project: a folder path, or a remote-control project name from older versions."""
+        known = config.get("projects", {}).get(entry)
+        if known:
+            return Path(known)
+        path = Path(entry)
+        return path if path.is_absolute() else None
+
+    def normalize_folders(self, chosen, config):
+        folders = []
+        for entry in chosen:
+            path = self.folder_of(entry.strip(), config)
+            if path is None or not path.is_dir():
+                raise AutomationError(f"Esta pasta não existe: {entry}")
+            folders.append(str(path.resolve()))
+        return list(dict.fromkeys(folders))
 
     def validate(self, data, current=None):
         merged = {**(current or {}), **{key: value for key, value in data.items() if key in COLUMNS or key in
@@ -215,14 +246,27 @@ class Automations:
         if mode not in MODES:
             raise AutomationError("Modo inválido.")
         config = self.config()
-        if merged.get("project") not in config.get("projects", {}):
-            raise AutomationError("Escolha um projeto liberado no controle remoto.")
+        if "projects" in data:
+            chosen = data["projects"]
+        elif "project" in data:
+            chosen = [data["project"]]
+        else:
+            chosen = merged.get("projects") or ([merged["project"]] if merged.get("project") else [])
+        if not isinstance(chosen, list) or not all(isinstance(key, str) for key in chosen):
+            raise AutomationError("Projetos inválidos.")
+        if not any(key.strip() for key in chosen):
+            raise AutomationError("Escolha ao menos uma pasta.")
+        if len(chosen) > MAX_PROJECTS:
+            raise AutomationError(f"Escolha até {MAX_PROJECTS} pastas.")
+        projects = self.normalize_folders([key for key in chosen if key.strip()], config)
         isolate = bool(merged.get("isolate"))
         if isolate and mode != "write":
             raise AutomationError("Uma worktree por execução só faz sentido no modo de edição.")
         reuse = bool(merged.get("reuse_session"))
         if reuse and isolate:
             raise AutomationError("Reaproveitar a sessão não combina com uma worktree nova por execução.")
+        if reuse and len(projects) > 1:
+            raise AutomationError("Reaproveitar a sessão só funciona com um projeto: cada projeto tem a sua.")
         if "preset" in data or "cron" in data or current is None or any(key in data for key in ("hour", "minute", "weekday")):
             cron = schedule_cron(merged.get("preset") or "daily", int(merged.get("hour", 9)), int(merged.get("minute", 0)),
                                  int(merged.get("weekday", 1)), merged.get("cron"))
@@ -241,7 +285,8 @@ class Automations:
         playbook = str(merged.get("playbook") or "").strip() or None
         if (model and len(model) > 120) or (playbook and len(playbook) > 128):
             raise AutomationError("Modelo ou playbook inválido.")
-        return {"name": name, "prompt": prompt, "agent": merged["agent"], "project": merged["project"], "mode": mode,
+        return {"name": name, "prompt": prompt, "agent": merged["agent"], "project": projects[0],
+                "projects": json.dumps(projects), "mode": mode,
                 "model": model, "playbook": playbook, "isolate": int(isolate), "preset": merged.get("preset") or "daily",
                 "cron": cron, "enabled": int(merged.get("enabled", True) is not False), "precheck": precheck,
                 "precheck_timeout": timeout, "grace_minutes": grace, "reuse_session": int(reuse)}
@@ -263,7 +308,8 @@ class Automations:
             item["next_run"] = stamp(next_occurrence(item["cron"], now))
         elif not item["enabled"]:
             item["next_run"] = None
-        if item["reuse_session"] == 0 or item["project"] != current["project"] or item["agent"] != current["agent"]:
+        if (item["reuse_session"] == 0 or json.loads(item["projects"]) != current["projects"]
+                or item["agent"] != current["agent"]):
             item["last_session"] = None
         item["updated"] = stamp(now)
         with self.lock, self.db() as db:
@@ -296,13 +342,16 @@ class Automations:
         return items
 
     def request_run(self, automation_id, now=None):
-        """Queue a manual run; the host dispatches it on its next check, without the precheck."""
-        self.show(automation_id)
-        run_id = str(uuid.uuid4())
+        """Queue a manual run in each project; the host dispatches them on its next check, without the precheck."""
+        item = self.show(automation_id)
+        run_ids = []
         with self.lock, self.db() as db:
-            db.execute("INSERT INTO runs(id,automation_id,trigger,scheduled_for,created,status) VALUES(?,?,?,?,?,?)",
-                       (run_id, automation_id, "manual", None, stamp_seconds(now), "queued"))
-        return run_id
+            for project in item["projects"]:
+                run_ids.append(str(uuid.uuid4()))
+                db.execute("INSERT INTO runs(id,automation_id,trigger,scheduled_for,created,status,project) "
+                           "VALUES(?,?,?,?,?,?,?)",
+                           (run_ids[-1], automation_id, "manual", None, stamp_seconds(now), "queued", project))
+        return run_ids[0] if len(run_ids) == 1 else run_ids
 
     def runs(self, automation_id=None, limit=50):
         limit = max(1, min(int(limit), 200))
@@ -336,12 +385,13 @@ class Automations:
 
     # --- Host side ------------------------------------------------------------------------------
 
-    def record(self, automation_id, trigger, status, scheduled_for=None, task_id=None, detail=None, now=None):
+    def record(self, automation_id, trigger, status, scheduled_for=None, task_id=None, detail=None, now=None,
+               project=None):
         run_id = str(uuid.uuid4())
         with self.db() as db:
-            db.execute("INSERT INTO runs(id,automation_id,trigger,scheduled_for,created,status,task_id,detail) "
-                       "VALUES(?,?,?,?,?,?,?,?)", (run_id, automation_id, trigger, scheduled_for, stamp_seconds(now),
-                                                   status, task_id, (detail or "")[:2000] or None))
+            db.execute("INSERT INTO runs(id,automation_id,trigger,scheduled_for,created,status,task_id,detail,project) "
+                       "VALUES(?,?,?,?,?,?,?,?,?)", (run_id, automation_id, trigger, scheduled_for, stamp_seconds(now),
+                                                     status, task_id, (detail or "")[:2000] or None, project))
             self.trim(db, automation_id)
         return run_id
 
@@ -365,15 +415,15 @@ class Automations:
             return f"A pré-checagem saiu com código {done.returncode}." + (f" {tail}" if tail else "")
         return None
 
-    def dispatch(self, item, jobs, config, trigger, scheduled_for=None, run_id=None, now=None):
-        """Start one run. Returns (status, task_id, detail) and records it."""
+    def dispatch(self, item, jobs, config, trigger, scheduled_for=None, run_id=None, now=None, project=None):
+        """Start one run in one folder. Returns (status, task_id, detail) and records it."""
         from remote_jobs import RemoteError  # the host already imports it; keep this module light elsewhere
-        path = config.get("projects", {}).get(item["project"])
+        project = project or item["projects"][0]
+        path = self.folder_of(project, config)
+        path = path.resolve() if path is not None and path.is_dir() else None
         status, task_id, detail = "dispatched", None, None
-        if not path or not Path(path).is_dir():
-            status, detail = "skipped_unavailable", "O projeto não está mais liberado ou a pasta não existe."
-        elif item["mode"] == "write" and not config.get("allow_write"):
-            status, detail = "skipped_unavailable", "A escrita está desligada no controle remoto."
+        if path is None:
+            status, detail = "skipped_unavailable", "A pasta não existe mais."
         elif trigger == "schedule" and item["precheck"]:
             detail = self.precheck(item, path)
             if detail:
@@ -383,13 +433,14 @@ class Automations:
             session = item["last_session"] if item["reuse_session"] else None
             try:
                 try:
-                    task = jobs.start(item["project"], item["agent"], item["prompt"], request, item["mode"], item["model"],
-                                      session, playbook=item["playbook"], isolate=item["isolate"])
+                    task = jobs.start(str(path), item["agent"], item["prompt"], request, item["mode"], item["model"],
+                                      session, playbook=item["playbook"], isolate=item["isolate"], folder=str(path))
                 except RemoteError:
                     if not session:
                         raise
-                    task = jobs.start(item["project"], item["agent"], item["prompt"], request + "-fresh", item["mode"],
-                                      item["model"], None, playbook=item["playbook"], isolate=item["isolate"])
+                    task = jobs.start(str(path), item["agent"], item["prompt"], request + "-fresh", item["mode"],
+                                      item["model"], None, playbook=item["playbook"], isolate=item["isolate"],
+                                      folder=str(path))
                 task_id = task["id"]
                 with self.db() as db:
                     db.execute("UPDATE automations SET last_session=? WHERE id=?", (task.get("session_id"), item["id"]))
@@ -401,7 +452,7 @@ class Automations:
             if run_id:
                 db.execute("UPDATE runs SET status=?,task_id=?,detail=? WHERE id=?", (status, task_id, detail, run_id))
         if not run_id:
-            self.record(item["id"], trigger, status, scheduled_for, task_id, detail, now)
+            self.record(item["id"], trigger, status, scheduled_for, task_id, detail, now, project)
         return status, task_id, detail
 
     def tick(self, jobs, now=None):
@@ -409,7 +460,8 @@ class Automations:
         now = now or local_now()
         config = self.config()
         with self.db() as db:
-            queued = [dict(row) for row in db.execute("SELECT id, automation_id FROM runs WHERE status='queued' ORDER BY rowid")]
+            queued = [dict(row) for row in db.execute(
+                "SELECT id, automation_id, project FROM runs WHERE status='queued' ORDER BY rowid")]
             due = [self.row(row) for row in db.execute(
                 "SELECT * FROM automations WHERE enabled=1 AND next_run IS NOT NULL AND next_run<=?", (stamp(now),))]
         for run in queued:
@@ -419,18 +471,27 @@ class Automations:
                 with self.db() as db:
                     db.execute("DELETE FROM runs WHERE id=?", (run["id"],))
                 continue
+            project = run["project"] or item["projects"][0]
+            if project not in item["projects"]:  # removed from the automation after "run now"
+                with self.db() as db:
+                    db.execute("DELETE FROM runs WHERE id=?", (run["id"],))
+                continue
             with self.db() as db:
-                db.execute("UPDATE runs SET status='dispatching' WHERE id=?", (run["id"],))
-            self.dispatch(item, jobs, config, "manual", run_id=run["id"], now=now)
+                db.execute("UPDATE runs SET status='dispatching', project=? WHERE id=?", (project, run["id"]))
+            self.dispatch(item, jobs, config, "manual", run_id=run["id"], now=now, project=project)
         for item in due:
             scheduled = dt.datetime.fromisoformat(item["next_run"])
             with self.db() as db:  # move the schedule first, so a slow precheck or a crash never repeats a run
                 db.execute("UPDATE automations SET next_run=? WHERE id=?", (stamp(next_occurrence(item["cron"], now)), item["id"]))
-            if now - scheduled > dt.timedelta(minutes=item["grace_minutes"]):
-                self.record(item["id"], "schedule", "skipped_missed", item["next_run"],
-                            detail=f"O serviço estava desligado no horário ({item['next_run'].replace('T', ' ')}).", now=now)
-                continue
-            self.dispatch(item, jobs, config, "schedule", scheduled_for=item["next_run"], now=now)
+            missed = now - scheduled > dt.timedelta(minutes=item["grace_minutes"])
+            for project in item["projects"]:  # one task per project; a busy one never blocks the others
+                if missed:
+                    self.record(item["id"], "schedule", "skipped_missed", item["next_run"],
+                                detail=f"O serviço estava desligado no horário ({item['next_run'].replace('T', ' ')}).",
+                                now=now, project=project)
+                else:
+                    self.dispatch(item, jobs, config, "schedule", scheduled_for=item["next_run"], now=now,
+                                  project=project)
 
 
 def stamp_seconds(now=None):
@@ -466,7 +527,8 @@ def main(argv=None):
         command.add_argument("--name")
         command.add_argument("--prompt")
         command.add_argument("--agent", choices=AGENTS)
-        command.add_argument("--project")
+        command.add_argument("--project", action="append", dest="projects",
+                             help="repita para rodar em mais de um projeto")
         command.add_argument("--mode", choices=MODES)
         command.add_argument("--model")
         command.add_argument("--playbook")
@@ -498,7 +560,7 @@ def main(argv=None):
         elif args.command == "runs":
             result = store.runs(args.id, args.limit)
         else:
-            data = {key: getattr(args, key) for key in ("name", "prompt", "agent", "project", "mode", "model", "playbook",
+            data = {key: getattr(args, key) for key in ("name", "prompt", "agent", "projects", "mode", "model", "playbook",
                                                          "preset", "cron", "precheck", "precheck_timeout", "grace_minutes",
                                                          "isolate", "reuse_session") if getattr(args, key) is not None}
             if args.time:
